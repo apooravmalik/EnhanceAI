@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import importlib
 import inspect
+import itertools
 import json
 import math
 import os
@@ -21,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
+from urllib.error import HTTPError
 
 import yaml
 
@@ -29,11 +32,21 @@ class ValidationError(ValueError):
     """Raised when a system definition cannot be run safely."""
 
 
-def component(function: Callable[..., Any]) -> Callable[..., Any]:
-    """Mark a normal Python function as an Aisys component."""
+def component(
+    function: Callable[..., Any] | None = None,
+    *,
+    inputs: dict[str, str] | None = None,
+    outputs: dict[str, str] | None = None,
+) -> Callable[..., Any]:
+    """Mark a Python function as a component, optionally declaring typed ports."""
 
-    setattr(function, "__aisys_component__", True)
-    return function
+    def decorate(candidate: Callable[..., Any]) -> Callable[..., Any]:
+        setattr(candidate, "__aisys_component__", True)
+        setattr(candidate, "__aisys_inputs__", inputs)
+        setattr(candidate, "__aisys_outputs__", outputs)
+        return candidate
+
+    return decorate(function) if function is not None else decorate
 
 
 def _now() -> str:
@@ -167,6 +180,12 @@ class StateStore:
               PRIMARY KEY(experiment_id, case_id),
               FOREIGN KEY(experiment_id) REFERENCES experiments(id)
             );
+            CREATE TABLE IF NOT EXISTS index_entries (
+              index_id TEXT NOT NULL,
+              ordinal INTEGER NOT NULL,
+              payload_json TEXT NOT NULL,
+              PRIMARY KEY(index_id, ordinal)
+            );
             """
         )
         self.connection.commit()
@@ -210,6 +229,22 @@ class StateStore:
             "SELECT artifact_id FROM resources WHERE name = ?", (name,)
         ).fetchone()
         return None if row is None else str(row["artifact_id"])
+
+    def put_index_entries(self, index_id: str, entries: list[dict[str, Any]]) -> None:
+        with self.connection:
+            self.connection.execute("DELETE FROM index_entries WHERE index_id=?", (index_id,))
+            self.connection.executemany(
+                "INSERT INTO index_entries(index_id, ordinal, payload_json) VALUES (?, ?, ?)",
+                [(index_id, ordinal, _json(entry)) for ordinal, entry in enumerate(entries)],
+            )
+
+    def get_index_entries(self, index_id: str) -> list[dict[str, Any]]:
+        return [
+            json.loads(row["payload_json"])
+            for row in self.connection.execute(
+                "SELECT payload_json FROM index_entries WHERE index_id=? ORDER BY ordinal", (index_id,)
+            )
+        ]
 
     def create_run(self, run_id: str, workflow: str, manifest: dict[str, Any]) -> None:
         with self.connection:
@@ -360,18 +395,88 @@ async def _chunk_documents(
     return {"chunks": chunks}
 
 
-async def _index_chunks(ctx: RunContext, chunks: list[dict[str, Any]], name: str = "default", **_: Any) -> dict[str, Any]:
+async def _index_chunks(
+    ctx: RunContext,
+    chunks: list[dict[str, Any]],
+    name: str = "default",
+    storage: str = "artifact",
+    dimensions: int = 128,
+    **_: Any,
+) -> dict[str, Any]:
     if not chunks:
         raise ValidationError("Cannot index zero chunks.")
+    if storage not in {"artifact", "sqlite"}:
+        raise ValidationError("Index storage must be artifact or sqlite.")
+    if not isinstance(dimensions, int) or not 8 <= dimensions <= 8192:
+        raise ValidationError("Index dimensions must be an integer from 8 through 8192.")
     resource_name = _safe_name(name)
-    index_id = ctx.project.store.put_artifact(
-        {"name": resource_name, "chunks": chunks, "created_at": _now()}, "retrieval-index"
-    )
+    entries = [{"chunk": chunk, "vector": _hashed_vector(chunk["text"], dimensions)} for chunk in chunks]
+    storage_bytes = len(_json(entries).encode())
+    payload: dict[str, Any] = {
+        "name": resource_name,
+        "storage": storage,
+        "dimensions": dimensions,
+        "chunk_count": len(chunks),
+        "storage_bytes": storage_bytes,
+        "created_at": _now(),
+    }
+    if storage == "artifact":
+        payload["entries"] = entries
+    index_id = ctx.project.store.put_artifact(payload, "retrieval-index")
+    if storage == "sqlite":
+        ctx.project.store.put_index_entries(index_id, entries)
     ctx.project.store.set_resource(resource_name, index_id)
-    return {"index_id": index_id}
+    ctx.usage = {"index_id": index_id, "storage": storage, "dimensions": dimensions, "storage_bytes": storage_bytes}
+    return {
+        "index_id": index_id,
+        "index_info": {
+            "storage": storage,
+            "dimensions": dimensions,
+            "chunks": len(chunks),
+            "storage_bytes": storage_bytes,
+        },
+    }
 
 
-async def _retrieve_chunks(
+def _index_entries(ctx: RunContext, index_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    payload = ctx.project.store.get_artifact(index_id)
+    entries = payload.get("entries") if payload.get("storage", "artifact") == "artifact" else None
+    if entries is None:
+        entries = ctx.project.store.get_index_entries(index_id)
+    if not isinstance(entries, list) or not entries:
+        raise ValidationError(f"Index {index_id} has no retrievable entries.")
+    return payload, entries
+
+
+def _resource_index_id(ctx: RunContext, name: str, resolved_index_id: str | None) -> str:
+    index_id = resolved_index_id or ctx.project.store.get_resource(_safe_name(name))
+    if index_id is None:
+        raise ValidationError(f"Resource {name!r} is not built.")
+    return index_id
+
+
+async def _retrieve_bm25(
+    ctx: RunContext,
+    question: str,
+    name: str = "default",
+    top_k: int = 5,
+    k1: float = 1.2,
+    b: float = 0.75,
+    resolved_index_id: str | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    if not isinstance(question, str) or not question.strip():
+        raise ValidationError("Question must be a non-empty string.")
+    if not isinstance(top_k, int) or top_k < 1:
+        raise ValidationError("top_k must be a positive integer.")
+    index_id = _resource_index_id(ctx, name, resolved_index_id)
+    _, entries = _index_entries(ctx, index_id)
+    ranked = _rank_bm25(question, [entry["chunk"] for entry in entries], top_k, k1, b)
+    ctx.usage = {"retrieved_chunks": len(ranked), "index_id": index_id, "strategy": "bm25"}
+    return {"chunks": ranked}
+
+
+async def _retrieve_hash(
     ctx: RunContext,
     question: str,
     name: str = "default",
@@ -383,12 +488,66 @@ async def _retrieve_chunks(
         raise ValidationError("Question must be a non-empty string.")
     if not isinstance(top_k, int) or top_k < 1:
         raise ValidationError("top_k must be a positive integer.")
-    index_id = resolved_index_id or ctx.project.store.get_resource(_safe_name(name))
-    if index_id is None:
-        raise ValidationError(f"Resource {name!r} is not built.")
-    payload = ctx.project.store.get_artifact(index_id)
-    ranked = _rank_chunks(question, payload["chunks"], top_k)
-    ctx.usage = {"retrieved_chunks": len(ranked), "index_id": index_id}
+    index_id = _resource_index_id(ctx, name, resolved_index_id)
+    payload, entries = _index_entries(ctx, index_id)
+    ranked = _rank_hash(question, entries, int(payload.get("dimensions", 128)), top_k)
+    ctx.usage = {
+        "retrieved_chunks": len(ranked),
+        "index_id": index_id,
+        "strategy": "hash",
+        "dimensions": payload.get("dimensions"),
+    }
+    return {"chunks": ranked}
+
+
+async def _retrieve_hybrid(
+    ctx: RunContext,
+    question: str,
+    name: str = "default",
+    top_k: int = 5,
+    candidate_k: int = 20,
+    rrf_k: int = 60,
+    lexical_weight: float = 1.0,
+    vector_weight: float = 1.0,
+    resolved_index_id: str | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    index_id = _resource_index_id(ctx, name, resolved_index_id)
+    payload, entries = _index_entries(ctx, index_id)
+    chunks = [entry["chunk"] for entry in entries]
+    lexical = _rank_bm25(question, chunks, candidate_k, 1.2, 0.75)
+    vector = _rank_hash(question, entries, int(payload.get("dimensions", 128)), candidate_k)
+    ranked = _fuse_rrf(lexical, vector, top_k, rrf_k, lexical_weight, vector_weight)
+    ctx.usage = {
+        "retrieved_chunks": len(ranked),
+        "index_id": index_id,
+        "strategy": "hybrid-rrf",
+        "dimensions": payload.get("dimensions"),
+        "rrf_k": rrf_k,
+    }
+    return {"chunks": ranked}
+
+
+async def _fuse_rankings(
+    ctx: RunContext,
+    primary: list[dict[str, Any]],
+    secondary: list[dict[str, Any]],
+    top_k: int = 5,
+    rrf_k: int = 60,
+    primary_weight: float = 1.0,
+    secondary_weight: float = 1.0,
+    **_: Any,
+) -> dict[str, Any]:
+    ranked = _fuse_rrf(primary, secondary, top_k, rrf_k, primary_weight, secondary_weight)
+    ctx.usage = {"retrieved_chunks": len(ranked), "strategy": "rrf", "rrf_k": rrf_k}
+    return {"chunks": ranked}
+
+
+async def _rerank_chunks(
+    ctx: RunContext, question: str, chunks: list[dict[str, Any]], top_k: int = 5, **_: Any
+) -> dict[str, Any]:
+    ranked = _rank_bm25(question, chunks, top_k, 1.2, 0.75)
+    ctx.usage = {"retrieved_chunks": len(ranked), "strategy": "bm25-rerank"}
     return {"chunks": ranked}
 
 
@@ -459,10 +618,25 @@ def _builtin_components() -> dict[str, ComponentDefinition]:
             {"documents": "documents"}, {"chunks": "chunks"}, _chunk_documents
         ),
         "retrieval.index": ComponentDefinition(
-            {"chunks": "chunks"}, {"index_id": "index"}, _index_chunks
+            {"chunks": "chunks"}, {"index_id": "index", "index_info": "index_info"}, _index_chunks
         ),
         "retrieval.vector": ComponentDefinition(
-            {"question": "string"}, {"chunks": "chunks"}, _retrieve_chunks
+            {"question": "string"}, {"chunks": "chunks"}, _retrieve_bm25
+        ),
+        "retrieval.bm25": ComponentDefinition(
+            {"question": "string"}, {"chunks": "chunks"}, _retrieve_bm25
+        ),
+        "retrieval.hash": ComponentDefinition(
+            {"question": "string"}, {"chunks": "chunks"}, _retrieve_hash
+        ),
+        "retrieval.hybrid": ComponentDefinition(
+            {"question": "string"}, {"chunks": "chunks"}, _retrieve_hybrid
+        ),
+        "retrieval.rrf": ComponentDefinition(
+            {"primary": "chunks", "secondary": "chunks"}, {"chunks": "chunks"}, _fuse_rankings
+        ),
+        "retrieval.rerank": ComponentDefinition(
+            {"question": "string", "chunks": "chunks"}, {"chunks": "chunks"}, _rerank_chunks
         ),
         "answer.extractive": ComponentDefinition(
             {"question": "string", "chunks": "chunks"}, {"answer": "string"}, _extractive_answer
@@ -530,6 +704,8 @@ workflows:
         uses: retrieval.index
         with:
           name: default
+          storage: sqlite
+          dimensions: 128
     connections:
       - from: $input.path
         to: load.path
@@ -539,28 +715,53 @@ workflows:
         to: index.chunks
     output:
       index_id: index.index_id
+      index_info: index.index_info
 
   answer:
     input:
       question: string
     nodes:
-      retrieve:
-        uses: retrieval.vector
+      lexical:
+        uses: retrieval.bm25
         with:
           name: default
+          top_k: 12
+      vector:
+        uses: retrieval.hash
+        with:
+          name: default
+          top_k: 12
+      fuse:
+        uses: retrieval.rrf
+        with:
+          top_k: 5
+          rrf_k: 10
+      rerank:
+        uses: retrieval.rerank
+        with:
           top_k: 5
       answer:
         uses: answer.extractive
     connections:
       - from: $input.question
-        to: retrieve.question
+        to: lexical.question
+      - from: $input.question
+        to: vector.question
+      - from: lexical.chunks
+        to: fuse.primary
+      - from: vector.chunks
+        to: fuse.secondary
+      - from: $input.question
+        to: rerank.question
+      - from: fuse.chunks
+        to: rerank.chunks
       - from: $input.question
         to: answer.question
-      - from: retrieve.chunks
+      - from: rerank.chunks
         to: answer.chunks
     output:
       answer: answer.answer
-      sources: retrieve.chunks
+      sources: rerank.chunks
 """.lstrip()
         )
         (destination / "data" / "sample_documents.jsonl").write_text(
@@ -620,12 +821,18 @@ workflows:
         if not getattr(function, "__aisys_component__", False):
             raise ValidationError(f"{uses} must be marked with @component.")
         signature = inspect.signature(function)
-        inputs = {
+        inferred_inputs = {
             name: "any"
             for name, parameter in signature.parameters.items()
             if name != "ctx" and parameter.kind in (parameter.POSITIONAL_OR_KEYWORD, parameter.KEYWORD_ONLY)
         }
-        return ComponentDefinition(inputs, {"result": "any"}, function)
+        inputs = getattr(function, "__aisys_inputs__", None) or inferred_inputs
+        outputs = getattr(function, "__aisys_outputs__", None) or {"result": "any"}
+        if not isinstance(inputs, dict) or not isinstance(outputs, dict) or not outputs:
+            raise ValidationError(f"{uses} inputs and outputs must be dictionaries with at least one output.")
+        if not all(isinstance(name, str) and isinstance(kind, str) for name, kind in {**inputs, **outputs}.items()):
+            raise ValidationError(f"{uses} port names and types must be strings.")
+        return ComponentDefinition(inputs, outputs, function)
 
     def _component(self, uses: str) -> ComponentDefinition:
         if uses in self._builtins:
@@ -733,7 +940,7 @@ workflows:
         nodes: dict[str, Any] = {}
         for node_name, node in workflow.nodes.items():
             config = dict(node.config)
-            if node.uses == "retrieval.vector":
+            if node.uses in {"retrieval.vector", "retrieval.bm25", "retrieval.hash", "retrieval.hybrid"}:
                 resource_name = str(config.get("name", "default"))
                 index_id = self.store.get_resource(resource_name)
                 if index_id is None:
@@ -932,31 +1139,32 @@ workflows:
         return "\n".join(lines)
 
     def fetch_dataset(self, dataset: str, limit: int = 60) -> dict[str, Any]:
-        if dataset not in {"squad", "hotpotqa"}:
-            raise ValidationError("Public datasets supported in V1 are squad and hotpotqa.")
+        details = {
+            "squad": ("rajpurkar/squad", "plain_text", "validation", _squad_records),
+            "hotpotqa": ("hotpotqa/hotpot_qa", "distractor", "validation", _hotpot_records),
+            "coqa": ("stanfordnlp/coqa", "default", "validation", _coqa_records),
+            "triviaqa": ("mandarjoshi/trivia_qa", "rc", "validation", _triviaqa_records),
+            "duorc": ("ibm-research/duorc", "SelfRC", "validation", _duorc_records),
+        }
+        if dataset not in details:
+            raise ValidationError(f"Public datasets supported in V1.1 are: {', '.join(sorted(details))}.")
         if not 1 <= limit <= 100:
             raise ValidationError("Dataset limit must be between 1 and 100.")
-        details = {
-            "squad": ("rajpurkar/squad", "plain_text", "validation"),
-            "hotpotqa": ("hotpotqa/hotpot_qa", "distractor", "validation"),
-        }[dataset]
-        rows, total = _sample_viewer_rows(*details, limit)
+        source, config, split, converter = details[dataset]
+        rows, total = _sample_viewer_rows(source, config, split, limit)
         data_dir = self.root / "data" / dataset
         eval_dir = self.root / "evals"
         data_dir.mkdir(parents=True, exist_ok=True)
         eval_dir.mkdir(parents=True, exist_ok=True)
-        if dataset == "squad":
-            documents, cases = _squad_records(rows)
-        else:
-            documents, cases = _hotpot_records(rows)
+        documents, cases = converter(rows)
         documents_path = data_dir / "documents.jsonl"
         evaluation_path = eval_dir / f"{dataset}.jsonl"
         _write_jsonl(documents_path, documents)
         _write_jsonl(evaluation_path, cases)
         metadata = {
-            "dataset": details[0],
-            "config": details[1],
-            "split": details[2],
+            "dataset": source,
+            "config": config,
+            "split": split,
             "requested_limit": limit,
             "sampled_rows": len(rows),
             "viewer_total_rows": total,
@@ -1116,6 +1324,60 @@ workflows:
         result["report"] = str(report_path)
         return result
 
+    def sweep(self, spec_path: str | Path) -> dict[str, Any]:
+        path = Path(spec_path)
+        if not path.is_absolute():
+            path = self.root / path
+        try:
+            specification = yaml.safe_load(path.read_text())
+        except (OSError, yaml.YAMLError) as error:
+            raise ValidationError(f"Cannot read sweep specification {path}: {error}") from error
+        if not isinstance(specification, dict):
+            raise ValidationError("Sweep specification must be an object.")
+        workflow = specification.get("workflow", "answer")
+        dataset = specification.get("dataset")
+        ingest = specification.get("ingest")
+        parameters = specification.get("parameters")
+        if not isinstance(dataset, str) or not isinstance(parameters, dict) or not parameters:
+            raise ValidationError("Sweep needs dataset and a non-empty parameters mapping.")
+        if ingest is not None and (
+            not isinstance(ingest, dict)
+            or not isinstance(ingest.get("workflow", "ingest"), str)
+            or not isinstance(ingest.get("input"), dict)
+        ):
+            raise ValidationError("Sweep ingest must contain a workflow and object input.")
+        keys = sorted(parameters)
+        values = [parameters[key] for key in keys]
+        if not all(isinstance(value, list) and value for value in values):
+            raise ValidationError("Each sweep parameter must have a non-empty list of values.")
+        combinations = list(itertools.product(*values))
+        if len(combinations) > 64:
+            raise ValidationError("Sweep is capped at 64 combinations; split larger grids into focused experiments.")
+        original = self.system_path.read_text()
+        prefix = _safe_name(str(specification.get("name", path.stem)))
+        experiments: list[dict[str, Any]] = []
+        try:
+            for ordinal, combination in enumerate(combinations, start=1):
+                definition = yaml.safe_load(original)
+                assignment = dict(zip(keys, combination, strict=True))
+                for dotted_path, value in assignment.items():
+                    _set_mapping_path(definition, dotted_path, value)
+                self.system_path.write_text(yaml.safe_dump(definition, sort_keys=False, allow_unicode=True))
+                if ingest is not None:
+                    self.run(ingest.get("workflow", "ingest"), ingest["input"])
+                result = self.evaluate(workflow, dataset, f"{prefix}-{uuid.uuid4().hex[:8]}-{ordinal}")
+                experiments.append({"parameters": assignment, **result})
+        finally:
+            self.system_path.write_text(original)
+            if ingest is not None:
+                self.run(ingest.get("workflow", "ingest"), ingest["input"])
+        report_dir = self.root / "reports"
+        report_dir.mkdir(exist_ok=True)
+        report_path = report_dir / f"{prefix}-sweep.json"
+        report = {"name": prefix, "dataset": dataset, "experiments": experiments}
+        report_path.write_text(json.dumps(report, indent=2) + "\n")
+        return {"report": str(report_path), **report}
+
     def _write_experiment_report(self, name: str) -> Path:
         experiment = self.store.experiment(name)
         report_dir = self.root / "reports"
@@ -1157,8 +1419,12 @@ workflows:
         return report_path
 
 
-def _rank_chunks(question: str, chunks: list[dict[str, Any]], top_k: int) -> list[dict[str, Any]]:
+def _rank_bm25(
+    question: str, chunks: list[dict[str, Any]], top_k: int, k1: float, b: float
+) -> list[dict[str, Any]]:
     # ponytail: in-memory O(chunks × query_terms) scorer; add a persisted ANN index only after a corpus benchmark fails.
+    if not 0 < float(k1) <= 5 or not 0 <= float(b) <= 1:
+        raise ValidationError("BM25 k1 must be in (0, 5] and b must be in [0, 1].")
     document_frequencies: dict[str, int] = {}
     tokenized = [_tokenize(chunk["text"]) for chunk in chunks]
     for tokens in tokenized:
@@ -1166,44 +1432,111 @@ def _rank_chunks(question: str, chunks: list[dict[str, Any]], top_k: int) -> lis
             document_frequencies[token] = document_frequencies.get(token, 0) + 1
     count = len(chunks)
     query = _tokenize(question)
-    query_weights = {
-        token: (1 + math.log(query.count(token))) * (math.log((1 + count) / (1 + document_frequencies.get(token, 0))) + 1)
-        for token in set(query)
-    }
-    query_norm = math.sqrt(sum(weight * weight for weight in query_weights.values())) or 1.0
+    average_length = sum(len(tokens) for tokens in tokenized) / count if count else 1.0
     scored: list[tuple[float, dict[str, Any]]] = []
     for chunk, tokens in zip(chunks, tokenized, strict=True):
         term_counts = {token: tokens.count(token) for token in set(tokens)}
-        weights = {
-            token: (1 + math.log(frequency))
-            * (math.log((1 + count) / (1 + document_frequencies.get(token, 0))) + 1)
-            for token, frequency in term_counts.items()
-        }
-        norm = math.sqrt(sum(weight * weight for weight in weights.values())) or 1.0
-        score = sum(query_weights.get(token, 0.0) * weight for token, weight in weights.items()) / (query_norm * norm)
+        score = 0.0
+        for token in set(query):
+            frequency = term_counts.get(token, 0)
+            if not frequency:
+                continue
+            idf = math.log(1 + (count - document_frequencies.get(token, 0) + 0.5) / (document_frequencies.get(token, 0) + 0.5))
+            denominator = frequency + k1 * (1 - b + b * len(tokens) / average_length)
+            score += idf * (frequency * (k1 + 1) / denominator)
         scored.append((score, chunk))
     scored.sort(key=lambda item: (-item[0], item[1]["id"]))
     return [{**chunk, "score": round(score, 8)} for score, chunk in scored[:top_k]]
 
 
+def _hashed_vector(text: str, dimensions: int) -> dict[str, float]:
+    values: dict[int, float] = {}
+    for token in _tokenize(text):
+        digest = hashlib.blake2b(token.encode(), digest_size=8).digest()
+        bucket = int.from_bytes(digest[:4], "big") % dimensions
+        values[bucket] = values.get(bucket, 0.0) + (1.0 if digest[4] % 2 else -1.0)
+    norm = math.sqrt(sum(value * value for value in values.values())) or 1.0
+    return {str(bucket): round(value / norm, 8) for bucket, value in values.items()}
+
+
+def _rank_hash(
+    question: str, entries: list[dict[str, Any]], dimensions: int, top_k: int
+) -> list[dict[str, Any]]:
+    query = _hashed_vector(question, dimensions)
+    scored = [
+        (
+            sum(float(value) * float(entry["vector"].get(bucket, 0.0)) for bucket, value in query.items()),
+            entry["chunk"],
+        )
+        for entry in entries
+    ]
+    scored.sort(key=lambda item: (-item[0], item[1]["id"]))
+    return [{**chunk, "score": round(score, 8)} for score, chunk in scored[:top_k]]
+
+
+def _fuse_rrf(
+    primary: list[dict[str, Any]],
+    secondary: list[dict[str, Any]],
+    top_k: int,
+    rrf_k: int,
+    primary_weight: float,
+    secondary_weight: float,
+) -> list[dict[str, Any]]:
+    if not isinstance(rrf_k, int) or rrf_k < 1:
+        raise ValidationError("RRF rrf_k must be a positive integer.")
+    if primary_weight < 0 or secondary_weight < 0 or primary_weight + secondary_weight == 0:
+        raise ValidationError("RRF weights must be non-negative and at least one must be positive.")
+    # ponytail: two rankings cover the intended lexical/vector hybrid; general N-way fusion belongs in a later component manifest.
+    scores: dict[str, float] = {}
+    chunks: dict[str, dict[str, Any]] = {}
+    for ranking, weight in ((primary, primary_weight), (secondary, secondary_weight)):
+        for rank, chunk in enumerate(ranking, start=1):
+            chunks.setdefault(chunk["id"], chunk)
+            scores[chunk["id"]] = scores.get(chunk["id"], 0.0) + weight / (rrf_k + rank)
+    return [
+        {**chunks[chunk_id], "score": round(score, 8)}
+        for chunk_id, score in sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:top_k]
+    ]
+
+
 def _request_json(url: str) -> dict[str, Any]:
     request = urllib.request.Request(url, headers={"User-Agent": "aisys/0.1"})
-    try:
-        context = ssl.create_default_context()
-        host_bundle = Path("/etc/ssl/cert.pem")
-        if host_bundle.exists():
-            context.load_verify_locations(cafile=str(host_bundle))
-        with urllib.request.urlopen(request, timeout=30, context=context) as response:
-            return json.loads(response.read())
-    except Exception as error:
-        raise ValidationError(f"Public dataset request failed: {error}") from error
+    context = ssl.create_default_context()
+    host_bundle = Path("/etc/ssl/cert.pem")
+    if host_bundle.exists():
+        context.load_verify_locations(cafile=str(host_bundle))
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=30, context=context) as response:
+                return json.loads(response.read())
+        except HTTPError as error:
+            if error.code == 429 and attempt < 2:
+                time.sleep(2**attempt)
+                continue
+            raise ValidationError(f"Public dataset request failed: {error}") from error
+        except Exception as error:
+            raise ValidationError(f"Public dataset request failed: {error}") from error
+    raise AssertionError("Dataset retry loop exited unexpectedly.")
 
 
 def _sample_viewer_rows(dataset: str, config: str, split: str, limit: int) -> tuple[list[dict[str, Any]], int]:
     endpoint = "https://datasets-server.huggingface.co/rows"
-    initial = _request_json(
-        f"{endpoint}?{urllib.parse.urlencode({'dataset': dataset, 'config': config, 'split': split, 'offset': 0, 'length': 1})}"
-    )
+    parameters = {"dataset": dataset, "config": config, "split": split}
+    try:
+        initial = _request_json(
+            f"{endpoint}?{urllib.parse.urlencode({**parameters, 'offset': 0, 'length': 1})}"
+        )
+    except ValidationError as error:
+        if "429" not in str(error):
+            raise
+        # ponytail: a single first-rows response is a rate-limit fallback; restore distributed paging when the public API allows it.
+        preview = _request_json(
+            f"https://datasets-server.huggingface.co/first-rows?{urllib.parse.urlencode(parameters)}"
+        )
+        rows = [item.get("row", {}) for item in preview.get("rows", [])][:limit]
+        if not rows:
+            raise ValidationError(f"Dataset {dataset} returned no preview rows.") from error
+        return rows, len(rows)
     total = int(initial.get("num_rows_total", 0))
     if total < 1:
         raise ValidationError(f"Dataset {dataset} has no available rows in {config}/{split}.")
@@ -1284,6 +1617,82 @@ def _hotpot_records(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], l
     return list(documents.values()), cases
 
 
+def _coqa_records(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    documents: dict[str, dict[str, Any]] = {}
+    cases: list[dict[str, Any]] = []
+    for row in rows:
+        story = str(row["story"])
+        document_id = f"coqa:{hashlib.sha256(story.encode()).hexdigest()[:16]}"
+        documents.setdefault(document_id, {"id": document_id, "title": row.get("source", ""), "text": story})
+        questions = row.get("questions", [])
+        answers = row.get("answers", {}).get("input_text", [])
+        for ordinal, (question, answer) in enumerate(zip(questions, answers, strict=False)):
+            if str(answer).lower() == "unknown":
+                continue
+            cases.append(
+                {
+                    "id": f"{document_id}:{ordinal}",
+                    "input": {"question": question},
+                    "expected": {"source_ids": [document_id], "answer": answer},
+                    "metadata": {"dataset": "stanfordnlp/coqa", "source": row.get("source", "")},
+                }
+            )
+    return list(documents.values()), cases
+
+
+def _triviaqa_records(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    documents: dict[str, dict[str, Any]] = {}
+    cases: list[dict[str, Any]] = []
+    for row in rows:
+        question_id = str(row["question_id"])
+        candidates: list[tuple[str, str]] = []
+        for field, text_field in (("entity_pages", "wiki_context"), ("search_results", "search_context")):
+            source = row.get(field, {})
+            for title, text in zip(source.get("title", []), source.get(text_field, []), strict=False):
+                if text:
+                    candidates.append((str(title), str(text)))
+        answer = row.get("answer", {})
+        aliases = [str(value) for value in answer.get("aliases", []) if value]
+        if not aliases and answer.get("value"):
+            aliases = [str(answer["value"])]
+        expected_ids: list[str] = []
+        for ordinal, (title, text) in enumerate(candidates):
+            document_id = f"triviaqa:{question_id}:{ordinal}"
+            documents.setdefault(document_id, {"id": document_id, "title": title, "text": text})
+            if any(alias.casefold() in text.casefold() for alias in aliases):
+                expected_ids.append(document_id)
+        if expected_ids:
+            cases.append(
+                {
+                    "id": f"triviaqa:{question_id}",
+                    "input": {"question": row["question"]},
+                    "expected": {"source_ids": expected_ids, "answer": answer.get("value", "")},
+                    "metadata": {"dataset": "mandarjoshi/trivia_qa"},
+                }
+            )
+    return list(documents.values()), cases
+
+
+def _duorc_records(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    documents: dict[str, dict[str, Any]] = {}
+    cases: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("no_answer"):
+            continue
+        plot = str(row["plot"])
+        document_id = f"duorc:{hashlib.sha256(str(row['plot_id']).encode()).hexdigest()[:16]}"
+        documents.setdefault(document_id, {"id": document_id, "title": row.get("title", ""), "text": plot})
+        cases.append(
+            {
+                "id": f"duorc:{row['question_id']}",
+                "input": {"question": row["question"]},
+                "expected": {"source_ids": [document_id], "answer": (row.get("answers") or [""])[0]},
+                "metadata": {"dataset": "ibm-research/duorc", "title": row.get("title", "")},
+            }
+        )
+    return list(documents.values()), cases
+
+
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for line_number, line in enumerate(path.read_text().splitlines(), start=1):
@@ -1305,3 +1714,17 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _mean(values: list[float]) -> float:
     return round(sum(values) / len(values), 6) if values else 0.0
+
+
+def _set_mapping_path(value: dict[str, Any], dotted_path: str, replacement: Any) -> None:
+    if not isinstance(dotted_path, str) or not dotted_path:
+        raise ValidationError("Sweep parameter paths must be non-empty strings.")
+    target: Any = value
+    parts = dotted_path.split(".")
+    for part in parts[:-1]:
+        if not isinstance(target, dict) or part not in target:
+            raise ValidationError(f"Sweep parameter path {dotted_path!r} does not exist.")
+        target = target[part]
+    if not isinstance(target, dict) or parts[-1] not in target:
+        raise ValidationError(f"Sweep parameter path {dotted_path!r} does not exist.")
+    target[parts[-1]] = replacement

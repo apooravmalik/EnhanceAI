@@ -1,0 +1,142 @@
+{
+  "name": "v1-1-triviaqa",
+  "dataset": "evals/triviaqa.jsonl",
+  "experiments": [
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_5cd57b52212d",
+      "name": "v1-1-triviaqa-d003cb60-1",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-triviaqa-d003cb60-1.md",
+      "cases": 15,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.670202,
+      "hit_rate_at_k": 0.933333,
+      "mean_first_relevant_rank": 1.214286,
+      "dataset_hash": "460c0e017509bd1d4552560a1cd81b63d4a1e7e04e1b949653a3f1c189986e6d",
+      "system_hash": "aa8cebe4e234356f970845719806556be0ce8c30a2cae9be879eb055dee32510"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_cd735d44039b",
+      "name": "v1-1-triviaqa-c5f26609-2",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-triviaqa-c5f26609-2.md",
+      "cases": 15,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.670202,
+      "hit_rate_at_k": 0.933333,
+      "mean_first_relevant_rank": 1.214286,
+      "dataset_hash": "460c0e017509bd1d4552560a1cd81b63d4a1e7e04e1b949653a3f1c189986e6d",
+      "system_hash": "56b00e6b727010ae38d973bf515bff4b61ce4d9286a86c23123eafed7d82947c"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_3deeff8dc91a",
+      "name": "v1-1-triviaqa-5f10b3c1-3",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-triviaqa-5f10b3c1-3.md",
+      "cases": 15,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.752609,
+      "hit_rate_at_k": 1.0,
+      "mean_first_relevant_rank": 1.266667,
+      "dataset_hash": "460c0e017509bd1d4552560a1cd81b63d4a1e7e04e1b949653a3f1c189986e6d",
+      "system_hash": "c175e96965ee699f30072dcac37808fee693a97f619a65b04bc0c54dfde26e11"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_0c6f5b0ce276",
+      "name": "v1-1-triviaqa-c205ebe3-4",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-triviaqa-c205ebe3-4.md",
+      "cases": 15,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.752609,
+      "hit_rate_at_k": 1.0,
+      "mean_first_relevant_rank": 1.266667,
+      "dataset_hash": "460c0e017509bd1d4552560a1cd81b63d4a1e7e04e1b949653a3f1c189986e6d",
+      "system_hash": "1db58cb921de341c528e0042ba183cbcd31544a0dd5b76a0d5d96dc4eb3d2c1e"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_2f49cbdead25",
+      "name": "v1-1-triviaqa-099ff635-5",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-triviaqa-099ff635-5.md",
+      "cases": 15,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.670202,
+      "hit_rate_at_k": 0.933333,
+      "mean_first_relevant_rank": 1.214286,
+      "dataset_hash": "460c0e017509bd1d4552560a1cd81b63d4a1e7e04e1b949653a3f1c189986e6d",
+      "system_hash": "55a10334cd5de95fca98ab0f433d456c9f3047e69d39630dc927578669340ea8"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_d01ea78c3217",
+      "name": "v1-1-triviaqa-f7df6a21-6",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-triviaqa-f7df6a21-6.md",
+      "cases": 15,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.670202,
+      "hit_rate_at_k": 0.933333,
+      "mean_first_relevant_rank": 1.214286,
+      "dataset_hash": "460c0e017509bd1d4552560a1cd81b63d4a1e7e04e1b949653a3f1c189986e6d",
+      "system_hash": "7685888156b615cff131672a1378b41e0881c7509da3e96c9681744942cdf8cd"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_db98ed14d567",
+      "name": "v1-1-triviaqa-dee5f014-7",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-triviaqa-dee5f014-7.md",
+      "cases": 15,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.752609,
+      "hit_rate_at_k": 1.0,
+      "mean_first_relevant_rank": 1.266667,
+      "dataset_hash": "460c0e017509bd1d4552560a1cd81b63d4a1e7e04e1b949653a3f1c189986e6d",
+      "system_hash": "de54a87c77d9de2ad03af2d5e2aea57ce28b164c996d9895eb594217a61111c8"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_04e231ef745d",
+      "name": "v1-1-triviaqa-a81007e5-8",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-triviaqa-a81007e5-8.md",
+      "cases": 15,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.752609,
+      "hit_rate_at_k": 1.0,
+      "mean_first_relevant_rank": 1.266667,
+      "dataset_hash": "460c0e017509bd1d4552560a1cd81b63d4a1e7e04e1b949653a3f1c189986e6d",
+      "system_hash": "b8832386f5a2ea1e64ecf2beabb3868bba30190950b209a9ecd1847cd9d7c7b5"
+    }
+  ]
+}

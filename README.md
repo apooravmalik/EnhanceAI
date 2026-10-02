@@ -27,8 +27,9 @@ An architecture is only complete when it can be executed and evaluated. The plat
 
 - [Product design](docs/PRODUCT_DESIGN.md)
 - [V1 product requirements](docs/PRD.md)
+- [V1.1 RAG components and sweep contract](docs/V1_1_RAG_COMPONENTS.md)
 
-## V1: prove the loop with RAG
+## V1.1: configurable local RAG engineering
 
 V1 stays intentionally narrow. It should allow a developer to:
 
@@ -39,23 +40,24 @@ V1 stays intentionally narrow. It should allow a developer to:
 5. Change the architecture or configuration, repeat the evaluation, compare results, inspect failures, and reproduce prior runs.
 6. Generate a lightweight visual architecture from the same system definition.
 
-The implemented component set is intentionally small: document loader, word
-chunker, content-addressed local index, deterministic TF-IDF-style retriever,
-extractive answerer, and an optional OpenAI-compatible answer component.
-SQLite stores the local metadata and traces. External infrastructure is
-optional.
+The implemented component set includes document loading and chunking, BM25,
+hashed-vector retrieval, RRF fusion, reranking, artifact or SQLite-backed
+indexes, typed custom Python components, and parameter sweeps. SQLite stores
+local metadata and traces. External infrastructure is optional.
 
 ## Run it
 
     uv sync
     uv run aisys check
-    uv run aisys dataset fetch squad --limit 60
+    uv run aisys dataset fetch squad --limit 40
     uv run aisys run ingest --input data/squad/documents.jsonl
-    uv run aisys eval answer evals/squad.jsonl --name squad-top5
+    uv run aisys eval answer evals/squad.jsonl --name squad-hybrid
+    uv run aisys sweep sweeps/squad.yaml
     uv run aisys trace latest
 
-See the [V1 E2E verification report](reports/V1_E2E_REPORT.md) for the two
-public datasets, observed retrieval results, and all checks.
+See the [V1 E2E verification report](reports/V1_E2E_REPORT.md) and the
+[V1.1 RAG verification report](reports/V1_1_RAG_REPORT.md) for the public
+datasets, observed retrieval results, and all checks.
 
 ## What this is not yet
 

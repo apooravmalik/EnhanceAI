@@ -1,0 +1,142 @@
+{
+  "name": "v1-1-coqa",
+  "dataset": "evals/coqa.jsonl",
+  "experiments": [
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_c4284edc3346",
+      "name": "v1-1-coqa-dd4e98f0-1",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-coqa-dd4e98f0-1.md",
+      "cases": 81,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.888889,
+      "hit_rate_at_k": 0.888889,
+      "mean_first_relevant_rank": 1.319444,
+      "dataset_hash": "3b8c90712bfad63f41ad6fed74391bf9ad2ddb114754f0984bd060f288886a9b",
+      "system_hash": "aa8cebe4e234356f970845719806556be0ce8c30a2cae9be879eb055dee32510"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_bb68bfe6108f",
+      "name": "v1-1-coqa-f1e8c3c7-2",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-coqa-f1e8c3c7-2.md",
+      "cases": 81,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.888889,
+      "hit_rate_at_k": 0.888889,
+      "mean_first_relevant_rank": 1.319444,
+      "dataset_hash": "3b8c90712bfad63f41ad6fed74391bf9ad2ddb114754f0984bd060f288886a9b",
+      "system_hash": "56b00e6b727010ae38d973bf515bff4b61ce4d9286a86c23123eafed7d82947c"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_3ca7beb9964b",
+      "name": "v1-1-coqa-9a80c9fa-3",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-coqa-9a80c9fa-3.md",
+      "cases": 81,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.901235,
+      "hit_rate_at_k": 0.901235,
+      "mean_first_relevant_rank": 1.369863,
+      "dataset_hash": "3b8c90712bfad63f41ad6fed74391bf9ad2ddb114754f0984bd060f288886a9b",
+      "system_hash": "c175e96965ee699f30072dcac37808fee693a97f619a65b04bc0c54dfde26e11"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_c48a07357878",
+      "name": "v1-1-coqa-e662562f-4",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-coqa-e662562f-4.md",
+      "cases": 81,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.901235,
+      "hit_rate_at_k": 0.901235,
+      "mean_first_relevant_rank": 1.369863,
+      "dataset_hash": "3b8c90712bfad63f41ad6fed74391bf9ad2ddb114754f0984bd060f288886a9b",
+      "system_hash": "1db58cb921de341c528e0042ba183cbcd31544a0dd5b76a0d5d96dc4eb3d2c1e"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_466c98529d31",
+      "name": "v1-1-coqa-262a0080-5",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-coqa-262a0080-5.md",
+      "cases": 81,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.888889,
+      "hit_rate_at_k": 0.888889,
+      "mean_first_relevant_rank": 1.305556,
+      "dataset_hash": "3b8c90712bfad63f41ad6fed74391bf9ad2ddb114754f0984bd060f288886a9b",
+      "system_hash": "55a10334cd5de95fca98ab0f433d456c9f3047e69d39630dc927578669340ea8"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_ab216ea42b05",
+      "name": "v1-1-coqa-2745674d-6",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-coqa-2745674d-6.md",
+      "cases": 81,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.888889,
+      "hit_rate_at_k": 0.888889,
+      "mean_first_relevant_rank": 1.305556,
+      "dataset_hash": "3b8c90712bfad63f41ad6fed74391bf9ad2ddb114754f0984bd060f288886a9b",
+      "system_hash": "7685888156b615cff131672a1378b41e0881c7509da3e96c9681744942cdf8cd"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_bc8f33f4a6c0",
+      "name": "v1-1-coqa-dc5df2f7-7",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-coqa-dc5df2f7-7.md",
+      "cases": 81,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.888889,
+      "hit_rate_at_k": 0.888889,
+      "mean_first_relevant_rank": 1.319444,
+      "dataset_hash": "3b8c90712bfad63f41ad6fed74391bf9ad2ddb114754f0984bd060f288886a9b",
+      "system_hash": "de54a87c77d9de2ad03af2d5e2aea57ce28b164c996d9895eb594217a61111c8"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_a41849b88800",
+      "name": "v1-1-coqa-904294cf-8",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-coqa-904294cf-8.md",
+      "cases": 81,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.888889,
+      "hit_rate_at_k": 0.888889,
+      "mean_first_relevant_rank": 1.319444,
+      "dataset_hash": "3b8c90712bfad63f41ad6fed74391bf9ad2ddb114754f0984bd060f288886a9b",
+      "system_hash": "b8832386f5a2ea1e64ecf2beabb3868bba30190950b209a9ecd1847cd9d7c7b5"
+    }
+  ]
+}

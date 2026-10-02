@@ -85,12 +85,87 @@ class CliEndToEndTests(unittest.TestCase):
         system = self.root / "system.yaml"
         system.write_text(
             system.read_text().replace(
-                "      - from: $input.question\n        to: retrieve.question",
-                "      - from: answer.answer\n        to: retrieve.question",
+                "      - from: $input.question\n        to: lexical.question",
+                "      - from: answer.answer\n        to: lexical.question",
             )
         )
         with self.assertRaisesRegex(ValidationError, "cycle"):
             Project.load(self.root).validate()
+
+    def test_hybrid_sqlite_index_custom_ports_and_sweep(self) -> None:
+        self.root.mkdir(parents=True)
+        (self.root / "components.py").write_text(
+            "from aisys import component\n"
+            "@component(outputs={'question': 'string', 'label': 'string'})\n"
+            "def normalize(ctx, question):\n"
+            "    return {'question': question.lower(), 'label': 'normalized'}\n"
+        )
+        documents = self.root / "documents.jsonl"
+        documents.write_text(
+            '{"id":"returns","text":"Opened items can be returned within fourteen days."}\n'
+            '{"id":"shipping","text":"Shipping takes three business days."}\n'
+        )
+        evaluation = self.root / "golden.jsonl"
+        evaluation.write_text(
+            '{"id":"returns","input":{"question":"Can I return an opened item?"},'
+            '"expected":{"source_ids":["returns"]}}\n'
+        )
+        system = self.root / "system.yaml"
+        system.write_text(
+            """
+version: 1
+workflows:
+  ingest:
+    input: {path: path}
+    nodes:
+      load: {uses: documents.load}
+      chunk: {uses: documents.chunk, with: {size: 20, overlap: 0}}
+      index: {uses: retrieval.index, with: {name: default, storage: sqlite, dimensions: 32}}
+    connections:
+      - {from: $input.path, to: load.path}
+      - {from: load.documents, to: chunk.documents}
+      - {from: chunk.chunks, to: index.chunks}
+    output: {index_id: index.index_id}
+  answer:
+    input: {question: string}
+    nodes:
+      normalize: {uses: python:components:normalize}
+      lexical: {uses: retrieval.bm25, with: {name: default, top_k: 2}}
+      vector: {uses: retrieval.hash, with: {name: default, top_k: 2}}
+      fuse: {uses: retrieval.rrf, with: {top_k: 2, rrf_k: 60}}
+      rerank: {uses: retrieval.rerank, with: {top_k: 1}}
+    connections:
+      - {from: $input.question, to: normalize.question}
+      - {from: normalize.question, to: lexical.question}
+      - {from: normalize.question, to: vector.question}
+      - {from: lexical.chunks, to: fuse.primary}
+      - {from: vector.chunks, to: fuse.secondary}
+      - {from: normalize.question, to: rerank.question}
+      - {from: fuse.chunks, to: rerank.chunks}
+    output: {sources: rerank.chunks}
+""".lstrip()
+        )
+        project = Project.load(self.root)
+        project.run("ingest", {"path": str(documents)})
+        result = project.run("answer", {"question": "Can I return an opened item?"})
+        self.assertEqual(result["outputs"]["sources"][0]["document_id"], "returns")
+        sweep = self.root / "sweep.yaml"
+        sweep.write_text(
+            f"""
+name: retrieval-grid
+workflow: answer
+dataset: {evaluation}
+ingest:
+  workflow: ingest
+  input: {{path: {documents}}}
+parameters:
+  workflows.ingest.nodes.index.with.dimensions: [32, 64]
+  workflows.answer.nodes.fuse.with.rrf_k: [10, 60]
+""".lstrip()
+        )
+        results = project.sweep(sweep)
+        self.assertEqual(len(results["experiments"]), 4)
+        self.assertEqual(project.validate()["status"], "valid")
 
 
 if __name__ == "__main__":

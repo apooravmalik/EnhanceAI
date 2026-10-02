@@ -1,0 +1,142 @@
+{
+  "name": "v1-1-duorc",
+  "dataset": "evals/duorc.jsonl",
+  "experiments": [
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_a4e6eb81d4a9",
+      "name": "v1-1-duorc-e025ee05-1",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-duorc-e025ee05-1.md",
+      "cases": 20,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.95,
+      "hit_rate_at_k": 0.95,
+      "mean_first_relevant_rank": 1.210526,
+      "dataset_hash": "3445a529d22e7d762c5acc88292bde2c36dd710665866729c0656f6f4c0e89af",
+      "system_hash": "aa8cebe4e234356f970845719806556be0ce8c30a2cae9be879eb055dee32510"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_4f7dcf26d299",
+      "name": "v1-1-duorc-a4d3ec27-2",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-duorc-a4d3ec27-2.md",
+      "cases": 20,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.95,
+      "hit_rate_at_k": 0.95,
+      "mean_first_relevant_rank": 1.210526,
+      "dataset_hash": "3445a529d22e7d762c5acc88292bde2c36dd710665866729c0656f6f4c0e89af",
+      "system_hash": "56b00e6b727010ae38d973bf515bff4b61ce4d9286a86c23123eafed7d82947c"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_a4940f787a58",
+      "name": "v1-1-duorc-b2cd4b49-3",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-duorc-b2cd4b49-3.md",
+      "cases": 20,
+      "failed_cases": 0,
+      "source_recall_at_k": 1.0,
+      "hit_rate_at_k": 1.0,
+      "mean_first_relevant_rank": 1.2,
+      "dataset_hash": "3445a529d22e7d762c5acc88292bde2c36dd710665866729c0656f6f4c0e89af",
+      "system_hash": "c175e96965ee699f30072dcac37808fee693a97f619a65b04bc0c54dfde26e11"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_d67bf856fa1b",
+      "name": "v1-1-duorc-3dd99cc9-4",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-duorc-3dd99cc9-4.md",
+      "cases": 20,
+      "failed_cases": 0,
+      "source_recall_at_k": 1.0,
+      "hit_rate_at_k": 1.0,
+      "mean_first_relevant_rank": 1.2,
+      "dataset_hash": "3445a529d22e7d762c5acc88292bde2c36dd710665866729c0656f6f4c0e89af",
+      "system_hash": "1db58cb921de341c528e0042ba183cbcd31544a0dd5b76a0d5d96dc4eb3d2c1e"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_d8bc07d5d557",
+      "name": "v1-1-duorc-9a12e8b8-5",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-duorc-9a12e8b8-5.md",
+      "cases": 20,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.95,
+      "hit_rate_at_k": 0.95,
+      "mean_first_relevant_rank": 1.210526,
+      "dataset_hash": "3445a529d22e7d762c5acc88292bde2c36dd710665866729c0656f6f4c0e89af",
+      "system_hash": "55a10334cd5de95fca98ab0f433d456c9f3047e69d39630dc927578669340ea8"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_7be2650573ce",
+      "name": "v1-1-duorc-330a09d3-6",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-duorc-330a09d3-6.md",
+      "cases": 20,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.95,
+      "hit_rate_at_k": 0.95,
+      "mean_first_relevant_rank": 1.210526,
+      "dataset_hash": "3445a529d22e7d762c5acc88292bde2c36dd710665866729c0656f6f4c0e89af",
+      "system_hash": "7685888156b615cff131672a1378b41e0881c7509da3e96c9681744942cdf8cd"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_a7ee73ad1c07",
+      "name": "v1-1-duorc-b4bab562-7",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-duorc-b4bab562-7.md",
+      "cases": 20,
+      "failed_cases": 0,
+      "source_recall_at_k": 1.0,
+      "hit_rate_at_k": 1.0,
+      "mean_first_relevant_rank": 1.2,
+      "dataset_hash": "3445a529d22e7d762c5acc88292bde2c36dd710665866729c0656f6f4c0e89af",
+      "system_hash": "de54a87c77d9de2ad03af2d5e2aea57ce28b164c996d9895eb594217a61111c8"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_8502a2409ed0",
+      "name": "v1-1-duorc-8a1d0d8b-8",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-duorc-8a1d0d8b-8.md",
+      "cases": 20,
+      "failed_cases": 0,
+      "source_recall_at_k": 1.0,
+      "hit_rate_at_k": 1.0,
+      "mean_first_relevant_rank": 1.2,
+      "dataset_hash": "3445a529d22e7d762c5acc88292bde2c36dd710665866729c0656f6f4c0e89af",
+      "system_hash": "b8832386f5a2ea1e64ecf2beabb3868bba30190950b209a9ecd1847cd9d7c7b5"
+    }
+  ]
+}

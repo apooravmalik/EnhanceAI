@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     dataset = commands.add_parser("dataset", help="Fetch a supported public evaluation dataset.")
     dataset_commands = dataset.add_subparsers(dest="dataset_command", required=True)
     fetch = dataset_commands.add_parser("fetch", help="Fetch and convert a public dataset.")
-    fetch.add_argument("dataset", choices=("squad", "hotpotqa"))
+    fetch.add_argument("dataset", choices=("squad", "hotpotqa", "coqa", "triviaqa", "duorc"))
     fetch.add_argument("--limit", type=int, default=60)
 
     evaluate = commands.add_parser("eval", help="Evaluate source retrieval against JSONL cases.")
@@ -70,6 +70,9 @@ def build_parser() -> argparse.ArgumentParser:
     compare = commands.add_parser("compare", help="Compare two recorded evaluation experiments.")
     compare.add_argument("baseline")
     compare.add_argument("candidate")
+
+    sweep = commands.add_parser("sweep", help="Run every configuration in a YAML parameter grid.")
+    sweep.add_argument("spec")
     return parser
 
 
@@ -100,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
             _print(project.evaluate(arguments.workflow, arguments.dataset, arguments.name))
         elif arguments.command == "compare":
             _print(project.compare(arguments.baseline, arguments.candidate))
+        elif arguments.command == "sweep":
+            _print(project.sweep(arguments.spec))
         else:
             parser.error("Unknown command.")
     except ValidationError as error:

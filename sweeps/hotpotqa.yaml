@@ -1,0 +1,11 @@
+name: v1-1-hotpotqa
+workflow: answer
+dataset: evals/hotpotqa.jsonl
+ingest:
+  workflow: ingest
+  input:
+    path: data/hotpotqa/documents.jsonl
+parameters:
+  workflows.ingest.nodes.index.with.storage: [artifact, sqlite]
+  workflows.ingest.nodes.index.with.dimensions: [32, 128]
+  workflows.answer.nodes.fuse.with.rrf_k: [10, 60]

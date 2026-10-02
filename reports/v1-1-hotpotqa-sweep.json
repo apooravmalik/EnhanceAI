@@ -1,0 +1,142 @@
+{
+  "name": "v1-1-hotpotqa",
+  "dataset": "evals/hotpotqa.jsonl",
+  "experiments": [
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_bfce2bf6e533",
+      "name": "v1-1-hotpotqa-7d31c811-1",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-hotpotqa-7d31c811-1.md",
+      "cases": 30,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.566667,
+      "hit_rate_at_k": 0.933333,
+      "mean_first_relevant_rank": 1.464286,
+      "dataset_hash": "ea47197ba1d345e7e61dc6ad502bafa79c2d77dd8fef13d84ccfd04ac00cd182",
+      "system_hash": "aa8cebe4e234356f970845719806556be0ce8c30a2cae9be879eb055dee32510"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_efcdde129f8f",
+      "name": "v1-1-hotpotqa-ce3e2d4a-2",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-hotpotqa-ce3e2d4a-2.md",
+      "cases": 30,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.566667,
+      "hit_rate_at_k": 0.933333,
+      "mean_first_relevant_rank": 1.464286,
+      "dataset_hash": "ea47197ba1d345e7e61dc6ad502bafa79c2d77dd8fef13d84ccfd04ac00cd182",
+      "system_hash": "56b00e6b727010ae38d973bf515bff4b61ce4d9286a86c23123eafed7d82947c"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_d713a7119261",
+      "name": "v1-1-hotpotqa-e8ed3dd8-3",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-hotpotqa-e8ed3dd8-3.md",
+      "cases": 30,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.516667,
+      "hit_rate_at_k": 0.8,
+      "mean_first_relevant_rank": 1.125,
+      "dataset_hash": "ea47197ba1d345e7e61dc6ad502bafa79c2d77dd8fef13d84ccfd04ac00cd182",
+      "system_hash": "c175e96965ee699f30072dcac37808fee693a97f619a65b04bc0c54dfde26e11"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 10,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_fd947d4f5160",
+      "name": "v1-1-hotpotqa-f067b288-4",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-hotpotqa-f067b288-4.md",
+      "cases": 30,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.516667,
+      "hit_rate_at_k": 0.8,
+      "mean_first_relevant_rank": 1.125,
+      "dataset_hash": "ea47197ba1d345e7e61dc6ad502bafa79c2d77dd8fef13d84ccfd04ac00cd182",
+      "system_hash": "1db58cb921de341c528e0042ba183cbcd31544a0dd5b76a0d5d96dc4eb3d2c1e"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_87d0e6d93fcf",
+      "name": "v1-1-hotpotqa-a2edc9dc-5",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-hotpotqa-a2edc9dc-5.md",
+      "cases": 30,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.566667,
+      "hit_rate_at_k": 0.933333,
+      "mean_first_relevant_rank": 1.464286,
+      "dataset_hash": "ea47197ba1d345e7e61dc6ad502bafa79c2d77dd8fef13d84ccfd04ac00cd182",
+      "system_hash": "55a10334cd5de95fca98ab0f433d456c9f3047e69d39630dc927578669340ea8"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 32,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_43e944eea9c1",
+      "name": "v1-1-hotpotqa-bfb51cc6-6",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-hotpotqa-bfb51cc6-6.md",
+      "cases": 30,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.566667,
+      "hit_rate_at_k": 0.933333,
+      "mean_first_relevant_rank": 1.464286,
+      "dataset_hash": "ea47197ba1d345e7e61dc6ad502bafa79c2d77dd8fef13d84ccfd04ac00cd182",
+      "system_hash": "7685888156b615cff131672a1378b41e0881c7509da3e96c9681744942cdf8cd"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "artifact"
+      },
+      "id": "exp_ea16bc61c535",
+      "name": "v1-1-hotpotqa-84a05f1e-7",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-hotpotqa-84a05f1e-7.md",
+      "cases": 30,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.516667,
+      "hit_rate_at_k": 0.8,
+      "mean_first_relevant_rank": 1.125,
+      "dataset_hash": "ea47197ba1d345e7e61dc6ad502bafa79c2d77dd8fef13d84ccfd04ac00cd182",
+      "system_hash": "de54a87c77d9de2ad03af2d5e2aea57ce28b164c996d9895eb594217a61111c8"
+    },
+    {
+      "parameters": {
+        "workflows.answer.nodes.fuse.with.rrf_k": 60,
+        "workflows.ingest.nodes.index.with.dimensions": 128,
+        "workflows.ingest.nodes.index.with.storage": "sqlite"
+      },
+      "id": "exp_dd977d09d09f",
+      "name": "v1-1-hotpotqa-6b1d8973-8",
+      "report": "/Users/yankitrajor/Desktop/Apoorav/Personal/AI-Twin/reports/v1-1-hotpotqa-6b1d8973-8.md",
+      "cases": 30,
+      "failed_cases": 0,
+      "source_recall_at_k": 0.516667,
+      "hit_rate_at_k": 0.8,
+      "mean_first_relevant_rank": 1.125,
+      "dataset_hash": "ea47197ba1d345e7e61dc6ad502bafa79c2d77dd8fef13d84ccfd04ac00cd182",
+      "system_hash": "b8832386f5a2ea1e64ecf2beabb3868bba30190950b209a9ecd1847cd9d7c7b5"
+    }
+  ]
+}

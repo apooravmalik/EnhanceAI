@@ -1,5 +1,5 @@
 version: 1
-name: local-retrieval-v1
+name: local-retrieval-v1-1
 workflows:
   ingest:
     input:
@@ -16,6 +16,8 @@ workflows:
         uses: retrieval.index
         with:
           name: default
+          storage: sqlite
+          dimensions: 128
     connections:
       - from: $input.path
         to: load.path
@@ -25,25 +27,54 @@ workflows:
         to: index.chunks
     output:
       index_id: index.index_id
+      index_info: index.index_info
 
   answer:
     input:
       question: string
     nodes:
-      retrieve:
-        uses: retrieval.vector
+      lexical:
+        uses: retrieval.bm25
         with:
           name: default
+          top_k: 12
+          k1: 1.2
+          b: 0.75
+      vector:
+        uses: retrieval.hash
+        with:
+          name: default
+          top_k: 12
+      fuse:
+        uses: retrieval.rrf
+        with:
+          top_k: 5
+          rrf_k: 10
+          primary_weight: 1.0
+          secondary_weight: 1.0
+      rerank:
+        uses: retrieval.rerank
+        with:
           top_k: 5
       answer:
         uses: answer.extractive
     connections:
       - from: $input.question
-        to: retrieve.question
+        to: lexical.question
+      - from: $input.question
+        to: vector.question
+      - from: lexical.chunks
+        to: fuse.primary
+      - from: vector.chunks
+        to: fuse.secondary
+      - from: $input.question
+        to: rerank.question
+      - from: fuse.chunks
+        to: rerank.chunks
       - from: $input.question
         to: answer.question
-      - from: retrieve.chunks
+      - from: rerank.chunks
         to: answer.chunks
     output:
       answer: answer.answer
-      sources: retrieve.chunks
+      sources: rerank.chunks
