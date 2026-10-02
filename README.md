@@ -28,6 +28,7 @@ An architecture is only complete when it can be executed and evaluated. The plat
 - [Product design](docs/PRODUCT_DESIGN.md)
 - [V1 product requirements](docs/PRD.md)
 - [V1.1 RAG components and sweep contract](docs/V1_1_RAG_COMPONENTS.md)
+- [V1.2 telemetry and evaluation contract](docs/V1_2_TELEMETRY_AND_EVALS.md)
 
 ## V1.1: configurable local RAG engineering
 
@@ -54,10 +55,18 @@ local metadata and traces. External infrastructure is optional.
     uv run aisys eval answer evals/squad.jsonl --name squad-hybrid
     uv run aisys sweep sweeps/squad.yaml
     uv run aisys trace latest
+    uv run aisys telemetry latest
+    uv run aisys leaderboard --metric ndcg_at_k
+    uv run aisys gate squad-hybrid --minimum 0.90
 
 See the [V1 E2E verification report](reports/V1_E2E_REPORT.md) and the
 [V1.1 RAG verification report](reports/V1_1_RAG_REPORT.md) for the public
 datasets, observed retrieval results, and all checks.
+
+V1.2 adds local component telemetry, rank-aware retrieval and answer metrics,
+latency summaries, evaluation slices, experiment leaderboards, and quality
+gates. Its verification evidence is in the
+[V1.2 telemetry and evaluation report](reports/V1_2_TELEMETRY_EVAL_REPORT.md).
 
 ## What this is not yet
 

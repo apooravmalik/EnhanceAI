@@ -19,6 +19,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -303,6 +304,37 @@ class StateStore:
             "SELECT * FROM spans WHERE run_id=? ORDER BY started_at, rowid", (run_id,)
         ).fetchall()
         return {"run": dict(run), "spans": [dict(span) for span in spans]}
+
+    def telemetry(self, run_id: str) -> dict[str, Any]:
+        trace = self.trace(run_id)
+        run = trace["run"]
+        nodes: dict[str, dict[str, Any]] = {}
+        totals: dict[str, float] = {}
+        for span in trace["spans"]:
+            if span["parent_id"] is None:
+                continue
+            name = str(span["node_name"])
+            item = nodes.setdefault(name, {"spans": 0, "completed": 0, "failed": 0, "duration_ms": 0.0, "usage": {}})
+            item["spans"] += 1
+            item["completed" if span["status"] == "completed" else "failed"] += 1
+            duration = _duration_ms(span["started_at"], span["ended_at"])
+            item["duration_ms"] += duration
+            usage = json.loads(span["usage_json"] or "{}")
+            for key, value in usage.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    item["usage"][key] = round(item["usage"].get(key, 0.0) + value, 6)
+                    totals[key] = round(totals.get(key, 0.0) + value, 6)
+        for item in nodes.values():
+            item["duration_ms"] = round(item["duration_ms"], 3)
+            item["mean_duration_ms"] = round(item["duration_ms"] / item["spans"], 3)
+        return {
+            "run_id": run_id,
+            "workflow": run["workflow"],
+            "status": run["status"],
+            "duration_ms": round(_duration_ms(run["started_at"], run["ended_at"]), 3),
+            "nodes": nodes,
+            "usage": totals,
+        }
 
     def latest_run_id(self) -> str | None:
         row = self.connection.execute(
@@ -1195,8 +1227,12 @@ workflows:
         if not cases:
             raise ValidationError("Evaluation dataset is empty.")
         for case in cases:
-            if not isinstance(case.get("id"), str) or not isinstance(case.get("input"), dict):
-                raise ValidationError("Each evaluation row needs string id and object input.")
+            if (
+                not isinstance(case.get("id"), str)
+                or not isinstance(case.get("input"), dict)
+                or not isinstance(case.get("expected", {}), dict)
+            ):
+                raise ValidationError("Each evaluation row needs string id plus object input and expected values.")
         experiment_id = f"exp_{uuid.uuid4().hex[:12]}"
         dataset_hash = _file_hash(path)
         system_hash = _file_hash(self.system_path)
@@ -1205,7 +1241,15 @@ workflows:
             "source_recall_at_k": [],
             "hit_rate_at_k": [],
             "first_relevant_rank": [],
+            "mrr": [],
+            "ndcg_at_k": [],
+            **{f"source_recall_at_{limit}": [] for limit in (1, 3, 5, 10)},
+            **{f"hit_rate_at_{limit}": [] for limit in (1, 3, 5, 10)},
+            **{f"precision_at_{limit}": [] for limit in (1, 3, 5, 10)},
         }
+        answer_values: dict[str, list[float]] = {"answer_exact_match": [], "answer_token_f1": []}
+        slice_values: dict[str, dict[str, list[float]]] = {}
+        durations: list[float] = []
         failed = 0
         for case in cases:
             started = time.perf_counter()
@@ -1213,50 +1257,73 @@ workflows:
                 run = self.run(workflow_name, case["input"])
                 chunks = run["outputs"].get("sources", [])
                 retrieved = [chunk.get("document_id") for chunk in chunks]
-                expected = set(case.get("expected", {}).get("source_ids", []))
-                rank = next((index + 1 for index, source_id in enumerate(retrieved) if source_id in expected), None)
-                covered = expected.intersection(retrieved)
-                scores = {
-                    "source_recall_at_k": len(covered) / len(expected) if expected else 0.0,
-                    "hit_rate_at_k": 1.0 if rank is not None else 0.0,
-                    "first_relevant_rank": float(rank or 0),
-                    "retrieved_count": float(len(retrieved)),
-                }
-                metric_values["source_recall_at_k"].append(scores["source_recall_at_k"])
-                metric_values["hit_rate_at_k"].append(scores["hit_rate_at_k"])
-                if rank is not None:
-                    metric_values["first_relevant_rank"].append(float(rank))
+                expected = {str(value) for value in case.get("expected", {}).get("source_ids", [])}
+                scores = _retrieval_scores(retrieved, expected)
+                expected_answer = case.get("expected", {}).get("answer")
+                answer = run["outputs"].get("answer")
+                if isinstance(expected_answer, str) and expected_answer.strip() and isinstance(answer, str):
+                    answer_scores = _answer_scores(answer, expected_answer)
+                    scores.update(answer_scores)
+                    for metric, value in answer_scores.items():
+                        answer_values[metric].append(value)
+                metadata = case.get("metadata") if isinstance(case.get("metadata"), dict) else {}
+                slice_name = str(metadata.get("slice", "all"))
+                scores["slice"] = slice_name
+                for metric, values in metric_values.items():
+                    values.append(float(scores[metric]))
+                    slice_values.setdefault(slice_name, {}).setdefault(metric, []).append(float(scores[metric]))
+                duration_ms = (time.perf_counter() - started) * 1000
+                durations.append(duration_ms)
                 self.store.add_eval_result(
                     experiment_id,
                     case["id"],
                     run["id"],
                     "completed",
-                    (time.perf_counter() - started) * 1000,
+                    duration_ms,
                     scores,
                 )
             except Exception as error:
                 failed += 1
+                duration_ms = (time.perf_counter() - started) * 1000
+                durations.append(duration_ms)
+                scores = {metric: 0.0 for metric in metric_values}
+                scores.update({"retrieved_count": 0.0, "slice": "failed"})
                 self.store.add_eval_result(
                     experiment_id,
                     case["id"],
                     None,
                     "failed",
-                    (time.perf_counter() - started) * 1000,
-                    {
-                        "source_recall_at_k": 0.0,
-                        "hit_rate_at_k": 0.0,
-                        "first_relevant_rank": 0.0,
-                        "retrieved_count": 0.0,
-                    },
+                    duration_ms,
+                    scores,
                     str(error),
                 )
-                metric_values["source_recall_at_k"].append(0.0)
+                for metric, values in metric_values.items():
+                    values.append(0.0)
+                    slice_values.setdefault("failed", {}).setdefault(metric, []).append(0.0)
         summary = {
             "cases": len(cases),
             "failed_cases": failed,
-            "source_recall_at_k": _mean(metric_values["source_recall_at_k"]),
-            "hit_rate_at_k": _mean(metric_values["hit_rate_at_k"]),
-            "mean_first_relevant_rank": _mean(metric_values["first_relevant_rank"]),
+            **{metric: _mean(values) for metric, values in metric_values.items() if metric != "first_relevant_rank"},
+            "mean_first_relevant_rank": _mean(
+                [value for value in metric_values["first_relevant_rank"] if value > 0]
+            ),
+            "answer_cases": len(answer_values["answer_exact_match"]),
+            "answer_exact_match": _mean(answer_values["answer_exact_match"]),
+            "answer_token_f1": _mean(answer_values["answer_token_f1"]),
+            "mean_latency_ms": _mean(durations),
+            "p95_latency_ms": _percentile(durations, 0.95),
+            "slices": {
+                name: {
+                    "cases": len(values["source_recall_at_k"]),
+                    **{
+                        metric: _mean([value for value in scores if value > 0])
+                        if metric == "first_relevant_rank"
+                        else _mean(scores)
+                        for metric, scores in values.items()
+                    },
+                }
+                for name, values in sorted(slice_values.items())
+            },
             "dataset_hash": dataset_hash,
             "system_hash": system_hash,
         }
@@ -1322,6 +1389,79 @@ workflows:
             )
         )
         result["report"] = str(report_path)
+        return result
+
+    def telemetry(self, run_id: str | None = None) -> dict[str, Any]:
+        selected = run_id or self.store.latest_run_id()
+        if selected is None:
+            raise ValidationError("No runs have been recorded.")
+        return self.store.telemetry(selected)
+
+    def leaderboard(self, metric: str = "source_recall_at_k") -> dict[str, Any]:
+        if not re.fullmatch(r"[a-zA-Z0-9_]+", metric):
+            raise ValidationError("Metric names may contain only letters, numbers, and underscores.")
+        rows = self.store.connection.execute(
+            "SELECT name, workflow, status, started_at, summary_json FROM experiments ORDER BY started_at DESC"
+        ).fetchall()
+        entries = []
+        for row in rows:
+            summary = json.loads(row["summary_json"] or "{}")
+            value = summary.get(metric)
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            entries.append(
+                {
+                    "name": row["name"],
+                    "workflow": row["workflow"],
+                    "status": row["status"],
+                    "metric": metric,
+                    "value": round(float(value), 6),
+                    "cases": summary.get("cases", 0),
+                    "p95_latency_ms": summary.get("p95_latency_ms", 0.0),
+                    "started_at": row["started_at"],
+                }
+            )
+        entries.sort(key=lambda entry: (-entry["value"], entry["p95_latency_ms"], entry["name"]))
+        return {"metric": metric, "experiments": entries}
+
+    def gate(
+        self,
+        candidate_name: str,
+        metric: str = "source_recall_at_k",
+        minimum: float | None = None,
+        baseline_name: str | None = None,
+        max_regression: float = 0.0,
+    ) -> dict[str, Any]:
+        candidate = self.store.experiment(candidate_name)
+        value = candidate["summary"].get(metric)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValidationError(f"Experiment {candidate_name!r} has no numeric {metric} metric.")
+        if minimum is not None and not 0 <= minimum <= 1:
+            raise ValidationError("Gate minimum must be between 0 and 1.")
+        if max_regression < 0:
+            raise ValidationError("Gate max regression must be non-negative.")
+        result: dict[str, Any] = {
+            "candidate": candidate_name,
+            "metric": metric,
+            "value": round(float(value), 6),
+            "minimum": minimum,
+            "baseline": baseline_name,
+            "max_regression": max_regression,
+            "passed": True,
+        }
+        if minimum is not None and value < minimum:
+            result["passed"] = False
+        if baseline_name is not None:
+            baseline = self.store.experiment(baseline_name)
+            if baseline["dataset_hash"] != candidate["dataset_hash"]:
+                raise ValidationError("A regression gate requires experiments from the same dataset snapshot.")
+            baseline_value = baseline["summary"].get(metric)
+            if not isinstance(baseline_value, (int, float)) or isinstance(baseline_value, bool):
+                raise ValidationError(f"Experiment {baseline_name!r} has no numeric {metric} metric.")
+            delta = float(value) - float(baseline_value)
+            result.update({"baseline_value": round(float(baseline_value), 6), "delta": round(delta, 6)})
+            if delta < -max_regression:
+                result["passed"] = False
         return result
 
     def sweep(self, spec_path: str | Path) -> dict[str, Any]:
@@ -1403,7 +1543,22 @@ workflows:
                     f"- Failed cases: {summary.get('failed_cases', 0)}",
                     f"- Mean gold-source recall@k: {summary.get('source_recall_at_k', 0):.4f}",
                     f"- Case hit rate@k: {summary.get('hit_rate_at_k', 0):.4f}",
+                    f"- MRR: {summary.get('mrr', 0):.4f}",
+                    f"- nDCG@k: {summary.get('ndcg_at_k', 0):.4f}",
                     f"- Mean first relevant rank: {summary.get('mean_first_relevant_rank', 0):.4f}",
+                    f"- Mean / p95 latency (ms): {summary.get('mean_latency_ms', 0):.3f} / {summary.get('p95_latency_ms', 0):.3f}",
+                    f"- Answer cases / exact match / token F1: {summary.get('answer_cases', 0)} / {summary.get('answer_exact_match', 0):.4f} / {summary.get('answer_token_f1', 0):.4f}",
+                    "",
+                    "## Retrieval cutoffs",
+                    "",
+                ]
+                + [
+                    f"- @{limit}: recall {summary.get(f'source_recall_at_{limit}', 0):.4f}, "
+                    f"hit {summary.get(f'hit_rate_at_{limit}', 0):.4f}, "
+                    f"precision {summary.get(f'precision_at_{limit}', 0):.4f}"
+                    for limit in (1, 3, 5, 10)
+                ]
+                + [
                     "",
                     "## Retrieval misses",
                     "",
@@ -1714,6 +1869,58 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _mean(values: list[float]) -> float:
     return round(sum(values) / len(values), 6) if values else 0.0
+
+
+def _percentile(values: list[float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * quantile
+    lower, upper = math.floor(position), math.ceil(position)
+    if lower == upper:
+        return round(ordered[lower], 3)
+    return round(ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower), 3)
+
+
+def _duration_ms(started_at: str, ended_at: str | None) -> float:
+    if ended_at is None:
+        return 0.0
+    return (datetime.fromisoformat(ended_at) - datetime.fromisoformat(started_at)).total_seconds() * 1000
+
+
+def _retrieval_scores(retrieved: list[Any], expected: set[str]) -> dict[str, float]:
+    # Source IDs identify documents while a retriever returns chunks; score each document at its first rank.
+    ranked = list(dict.fromkeys(str(source) for source in retrieved if isinstance(source, str)))
+    rank = next((index + 1 for index, source_id in enumerate(ranked) if source_id in expected), None)
+    scores = {
+        "source_recall_at_k": len(expected.intersection(ranked)) / len(expected) if expected else 0.0,
+        "hit_rate_at_k": 1.0 if rank is not None else 0.0,
+        "first_relevant_rank": float(rank or 0),
+        "mrr": 1.0 / rank if rank is not None else 0.0,
+        "retrieved_count": float(len(ranked)),
+    }
+    for limit in (1, 3, 5, 10):
+        selected = ranked[:limit]
+        relevant = len(expected.intersection(selected))
+        scores[f"source_recall_at_{limit}"] = relevant / len(expected) if expected else 0.0
+        scores[f"hit_rate_at_{limit}"] = 1.0 if relevant else 0.0
+        scores[f"precision_at_{limit}"] = relevant / len(selected) if selected else 0.0
+    cutoff = len(ranked)
+    dcg = sum(1 / math.log2(index + 2) for index, source_id in enumerate(ranked) if source_id in expected)
+    ideal = sum(1 / math.log2(index + 2) for index in range(min(len(expected), cutoff)))
+    scores["ndcg_at_k"] = dcg / ideal if ideal else 0.0
+    return {key: round(value, 6) for key, value in scores.items()}
+
+
+def _answer_scores(answer: str, expected: str) -> dict[str, float]:
+    actual_tokens, expected_tokens = _tokenize(answer), _tokenize(expected)
+    overlap = sum((Counter(actual_tokens) & Counter(expected_tokens)).values())
+    precision = overlap / len(actual_tokens) if actual_tokens else 0.0
+    recall = overlap / len(expected_tokens) if expected_tokens else 0.0
+    return {
+        "answer_exact_match": 1.0 if " ".join(actual_tokens) == " ".join(expected_tokens) else 0.0,
+        "answer_token_f1": round(2 * precision * recall / (precision + recall), 6) if precision + recall else 0.0,
+    }
 
 
 def _set_mapping_path(value: dict[str, Any], dotted_path: str, replacement: Any) -> None:

@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from aisys import Project, ValidationError
+from aisys.core import _retrieval_scores
 
 
 class CliEndToEndTests(unittest.TestCase):
@@ -61,6 +62,9 @@ class CliEndToEndTests(unittest.TestCase):
         )
         self.assertEqual(evaluation["failed_cases"], 0)
         self.assertEqual(evaluation["source_recall_at_k"], 1.0)
+        self.assertEqual(evaluation["source_recall_at_1"], 1.0)
+        self.assertEqual(evaluation["mrr"], 1.0)
+        self.assertGreaterEqual(evaluation["p95_latency_ms"], 0.0)
         partial_cases = self.root / "evals" / "partial.jsonl"
         partial_cases.write_text(
             '{"id":"partial","input":{"question":"Can I return an opened item?"},'
@@ -79,6 +83,13 @@ class CliEndToEndTests(unittest.TestCase):
         self.assertEqual(partial["hit_rate_at_k"], 1.0)
         trace = self.cli("--project", str(self.root), "trace", "latest")
         self.assertEqual(trace["run"]["status"], "completed")
+        telemetry = self.cli("--project", str(self.root), "telemetry", "latest")
+        self.assertEqual(telemetry["status"], "completed")
+        self.assertIn("lexical", telemetry["nodes"])
+        leaderboard = self.cli("--project", str(self.root), "leaderboard", "--metric", "mrr")
+        self.assertEqual(leaderboard["experiments"][0]["metric"], "mrr")
+        gate = self.cli("--project", str(self.root), "gate", "baseline", "--minimum", "1")
+        self.assertTrue(gate["passed"])
 
     def test_validator_rejects_cycle(self) -> None:
         Project.init(self.root)
@@ -91,6 +102,11 @@ class CliEndToEndTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValidationError, "cycle"):
             Project.load(self.root).validate()
+
+    def test_document_metrics_do_not_reward_repeated_chunks(self) -> None:
+        scores = _retrieval_scores(["gold", "gold", "gold"], {"gold"})
+        self.assertEqual(scores["precision_at_3"], 1.0)
+        self.assertEqual(scores["ndcg_at_k"], 1.0)
 
     def test_hybrid_sqlite_index_custom_ports_and_sweep(self) -> None:
         self.root.mkdir(parents=True)

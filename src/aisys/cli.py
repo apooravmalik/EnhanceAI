@@ -56,6 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
     trace = commands.add_parser("trace", help="Show a stored trace.")
     trace.add_argument("run_id", nargs="?", default="latest")
 
+    telemetry = commands.add_parser("telemetry", help="Summarize persisted component timing and usage.")
+    telemetry.add_argument("run_id", nargs="?", default="latest")
+
     dataset = commands.add_parser("dataset", help="Fetch a supported public evaluation dataset.")
     dataset_commands = dataset.add_subparsers(dest="dataset_command", required=True)
     fetch = dataset_commands.add_parser("fetch", help="Fetch and convert a public dataset.")
@@ -70,6 +73,16 @@ def build_parser() -> argparse.ArgumentParser:
     compare = commands.add_parser("compare", help="Compare two recorded evaluation experiments.")
     compare.add_argument("baseline")
     compare.add_argument("candidate")
+
+    leaderboard = commands.add_parser("leaderboard", help="Rank recorded evaluations by a summary metric.")
+    leaderboard.add_argument("--metric", default="source_recall_at_k")
+
+    gate = commands.add_parser("gate", help="Check an evaluation against quality and regression thresholds.")
+    gate.add_argument("candidate")
+    gate.add_argument("--metric", default="source_recall_at_k")
+    gate.add_argument("--minimum", type=float)
+    gate.add_argument("--baseline")
+    gate.add_argument("--max-regression", type=float, default=0.0)
 
     sweep = commands.add_parser("sweep", help="Run every configuration in a YAML parameter grid.")
     sweep.add_argument("spec")
@@ -97,12 +110,27 @@ def main(argv: list[str] | None = None) -> int:
             if run_id is None:
                 raise ValidationError("No runs have been recorded.")
             _print(project.store.trace(run_id))
+        elif arguments.command == "telemetry":
+            run_id = None if arguments.run_id == "latest" else arguments.run_id
+            _print(project.telemetry(run_id))
         elif arguments.command == "dataset" and arguments.dataset_command == "fetch":
             _print(project.fetch_dataset(arguments.dataset, arguments.limit))
         elif arguments.command == "eval":
             _print(project.evaluate(arguments.workflow, arguments.dataset, arguments.name))
         elif arguments.command == "compare":
             _print(project.compare(arguments.baseline, arguments.candidate))
+        elif arguments.command == "leaderboard":
+            _print(project.leaderboard(arguments.metric))
+        elif arguments.command == "gate":
+            result = project.gate(
+                arguments.candidate,
+                arguments.metric,
+                arguments.minimum,
+                arguments.baseline,
+                arguments.max_regression,
+            )
+            _print(result)
+            return 0 if result["passed"] else 1
         elif arguments.command == "sweep":
             _print(project.sweep(arguments.spec))
         else:
