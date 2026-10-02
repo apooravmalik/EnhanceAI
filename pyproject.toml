@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aisys"
+version = "0.1.0"
+description = "Local, reproducible AI system execution and retrieval evaluation"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6.0"]
+
+[project.scripts]
+aisys = "aisys.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aisys"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

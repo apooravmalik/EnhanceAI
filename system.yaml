@@ -1,0 +1,49 @@
+version: 1
+name: local-retrieval-v1
+workflows:
+  ingest:
+    input:
+      path: path
+    nodes:
+      load:
+        uses: documents.load
+      chunk:
+        uses: documents.chunk
+        with:
+          size: 180
+          overlap: 30
+      index:
+        uses: retrieval.index
+        with:
+          name: default
+    connections:
+      - from: $input.path
+        to: load.path
+      - from: load.documents
+        to: chunk.documents
+      - from: chunk.chunks
+        to: index.chunks
+    output:
+      index_id: index.index_id
+
+  answer:
+    input:
+      question: string
+    nodes:
+      retrieve:
+        uses: retrieval.vector
+        with:
+          name: default
+          top_k: 5
+      answer:
+        uses: answer.extractive
+    connections:
+      - from: $input.question
+        to: retrieve.question
+      - from: $input.question
+        to: answer.question
+      - from: retrieve.chunks
+        to: answer.chunks
+    output:
+      answer: answer.answer
+      sources: retrieve.chunks
