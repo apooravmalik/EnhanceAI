@@ -5,7 +5,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from aisys import Project, ValidationError
@@ -107,6 +109,100 @@ class CliEndToEndTests(unittest.TestCase):
         scores = _retrieval_scores(["gold", "gold", "gold"], {"gold"})
         self.assertEqual(scores["precision_at_3"], 1.0)
         self.assertEqual(scores["ndcg_at_k"], 1.0)
+
+    def test_openai_compatible_semantic_rag_and_answer_aliases(self) -> None:
+        embedding_requests = [0]
+
+        class EmbeddingsHandler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path == "/v1/chat/completions":
+                    payload = {
+                        "choices": [{"message": {"content": "Opened items can be returned within fourteen days."}}],
+                        "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                    }
+                elif self.path == "/v1/embeddings":
+                    embedding_requests[0] += 1
+                    vectors = []
+                    for text in request["input"]:
+                        tokens = text.lower()
+                        vectors.append([1.0, 0.0] if "return" in tokens or "opened" in tokens else [0.0, 1.0])
+                    payload = {"data": [{"index": index, "embedding": vector} for index, vector in enumerate(vectors)], "usage": {"prompt_tokens": len(vectors)}}
+                else:
+                    self.send_error(404)
+                    return
+                encoded = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            def log_message(self, *_: object) -> None:
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), EmbeddingsHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        old_key = os.environ.get("AISYS_TEST_KEY")
+        os.environ["AISYS_TEST_KEY"] = "test-key"
+        try:
+            self.root.mkdir(parents=True)
+            (self.root / "documents.jsonl").write_text(
+                '{"id":"returns","text":"Opened items can be returned within fourteen days."}\n'
+                '{"id":"shipping","text":"Shipping takes three business days."}\n'
+            )
+            (self.root / "golden.jsonl").write_text(
+                '{"id":"returns","input":{"question":"Can I return an opened item?"},'
+                '"expected":{"source_ids":["returns"],"answers":["Opened items can be returned within fourteen days."]}}\n'
+            )
+            (self.root / "system.yaml").write_text(
+                f"""
+version: 1
+workflows:
+  ingest:
+    input: {{path: path}}
+    nodes:
+      load: {{uses: documents.load}}
+      chunk: {{uses: documents.chunk, with: {{size: 20, overlap: 0}}}}
+      embed: {{uses: embeddings.openai_compatible, with: {{model: mock-embed, api_key_env: AISYS_TEST_KEY, base_url: http://127.0.0.1:{server.server_port}/v1, input_cost_per_million_tokens: 100}}}}
+      index: {{uses: retrieval.semantic_index, with: {{name: semantic, model: mock-embed, storage: sqlite}}}}
+    connections:
+      - {{from: $input.path, to: load.path}}
+      - {{from: load.documents, to: chunk.documents}}
+      - {{from: chunk.chunks, to: embed.chunks}}
+      - {{from: embed.entries, to: index.entries}}
+    output: {{index_id: index.index_id}}
+  answer:
+    input: {{question: string}}
+    nodes:
+      retrieve: {{uses: retrieval.semantic, with: {{name: semantic, model: mock-embed, api_key_env: AISYS_TEST_KEY, base_url: http://127.0.0.1:{server.server_port}/v1, top_k: 1, input_cost_per_million_tokens: 100}}}}
+      answer: {{uses: llm.openai_compatible, with: {{model: mock-chat, api_key_env: AISYS_TEST_KEY, base_url: http://127.0.0.1:{server.server_port}/v1, input_cost_per_million_tokens: 100, output_cost_per_million_tokens: 100}}}}
+    connections:
+      - {{from: $input.question, to: retrieve.question}}
+      - {{from: $input.question, to: answer.question}}
+      - {{from: retrieve.chunks, to: answer.chunks}}
+    output: {{answer: answer.answer, sources: retrieve.chunks}}
+""".lstrip()
+            )
+            project = Project.load(self.root)
+            first_ingest = project.run("ingest", {"path": str(self.root / "documents.jsonl")})
+            self.assertEqual(embedding_requests[0], 1)
+            project.run("ingest", {"path": str(self.root / "documents.jsonl")})
+            self.assertEqual(embedding_requests[0], 1)
+            self.assertGreater(project.telemetry(first_ingest["id"])["usage"]["estimated_cost_usd"], 0)
+            answer = project.run("answer", {"question": "Can I return an opened item?"})
+            self.assertEqual(answer["outputs"]["sources"][0]["document_id"], "returns")
+            self.assertGreater(project.telemetry(answer["id"])["usage"]["estimated_cost_usd"], 0)
+            evaluation = project.evaluate("answer", self.root / "golden.jsonl", "semantic-aliases")
+            self.assertEqual(evaluation["answer_exact_match"], 1.0)
+        finally:
+            if old_key is None:
+                os.environ.pop("AISYS_TEST_KEY", None)
+            else:
+                os.environ["AISYS_TEST_KEY"] = old_key
+            server.shutdown()
+            server.server_close()
 
     def test_hybrid_sqlite_index_custom_ports_and_sweep(self) -> None:
         self.root.mkdir(parents=True)

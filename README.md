@@ -29,6 +29,7 @@ An architecture is only complete when it can be executed and evaluated. The plat
 - [V1 product requirements](docs/PRD.md)
 - [V1.1 RAG components and sweep contract](docs/V1_1_RAG_COMPONENTS.md)
 - [V1.2 telemetry and evaluation contract](docs/V1_2_TELEMETRY_AND_EVALS.md)
+- [V1.3 semantic RAG contract](docs/V1_3_SEMANTIC_RAG.md)
 
 ## V1.1: configurable local RAG engineering
 
@@ -67,6 +68,11 @@ V1.2 adds local component telemetry, rank-aware retrieval and answer metrics,
 latency summaries, evaluation slices, experiment leaderboards, and quality
 gates. Its verification evidence is in the
 [V1.2 telemetry and evaluation report](reports/V1_2_TELEMETRY_EVAL_REPORT.md).
+
+V1.3 adds an optional OpenAI-compatible semantic retrieval path, locally
+cached embeddings, answer aliases, and explicit provider-cost telemetry. Start
+from [the semantic workflow template](examples/semantic-system.yaml) and see
+the [V1.3 verification report](reports/V1_3_SEMANTIC_RAG_REPORT.md).
 
 ## What this is not yet
 

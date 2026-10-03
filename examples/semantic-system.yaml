@@ -1,0 +1,97 @@
+version: 1
+name: semantic-hybrid-rag
+workflows:
+  ingest:
+    input:
+      path: path
+    nodes:
+      load:
+        uses: documents.load
+      chunk:
+        uses: documents.chunk
+        with:
+          size: 180
+          overlap: 30
+      lexical_index:
+        uses: retrieval.index
+        with:
+          name: default
+          storage: sqlite
+          dimensions: 128
+      embed:
+        uses: embeddings.openai_compatible
+        with:
+          model: text-embedding-3-small
+          api_key_env: OPENAI_API_KEY
+      semantic_index:
+        uses: retrieval.semantic_index
+        with:
+          name: semantic
+          model: text-embedding-3-small
+          storage: sqlite
+    connections:
+      - from: $input.path
+        to: load.path
+      - from: load.documents
+        to: chunk.documents
+      - from: chunk.chunks
+        to: lexical_index.chunks
+      - from: chunk.chunks
+        to: embed.chunks
+      - from: embed.entries
+        to: semantic_index.entries
+    output:
+      lexical_index: lexical_index.index_info
+      semantic_index: semantic_index.index_info
+
+  answer:
+    input:
+      question: string
+    nodes:
+      lexical:
+        uses: retrieval.bm25
+        with:
+          name: default
+          top_k: 12
+      semantic:
+        uses: retrieval.semantic
+        with:
+          name: semantic
+          model: text-embedding-3-small
+          api_key_env: OPENAI_API_KEY
+          top_k: 12
+      fuse:
+        uses: retrieval.rrf
+        with:
+          top_k: 5
+          rrf_k: 10
+      rerank:
+        uses: retrieval.rerank
+        with:
+          top_k: 5
+      answer:
+        uses: llm.openai_compatible
+        with:
+          model: gpt-4.1-mini
+          api_key_env: OPENAI_API_KEY
+          prompt: prompts/answer.md
+    connections:
+      - from: $input.question
+        to: lexical.question
+      - from: $input.question
+        to: semantic.question
+      - from: lexical.chunks
+        to: fuse.primary
+      - from: semantic.chunks
+        to: fuse.secondary
+      - from: $input.question
+        to: rerank.question
+      - from: fuse.chunks
+        to: rerank.chunks
+      - from: $input.question
+        to: answer.question
+      - from: rerank.chunks
+        to: answer.chunks
+    output:
+      answer: answer.answer
+      sources: rerank.chunks

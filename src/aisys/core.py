@@ -187,6 +187,15 @@ class StateStore:
               payload_json TEXT NOT NULL,
               PRIMARY KEY(index_id, ordinal)
             );
+            CREATE TABLE IF NOT EXISTS embedding_cache (
+              provider TEXT NOT NULL,
+              model TEXT NOT NULL,
+              dimensions INTEGER NOT NULL,
+              text_hash TEXT NOT NULL,
+              vector_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY(provider, model, dimensions, text_hash)
+            );
             """
         )
         self.connection.commit()
@@ -246,6 +255,24 @@ class StateStore:
                 "SELECT payload_json FROM index_entries WHERE index_id=? ORDER BY ordinal", (index_id,)
             )
         ]
+
+    def get_cached_embedding(
+        self, provider: str, model: str, dimensions: int | None, text: str
+    ) -> list[float] | None:
+        row = self.connection.execute(
+            "SELECT vector_json FROM embedding_cache WHERE provider=? AND model=? AND dimensions=? AND text_hash=?",
+            (provider, model, dimensions or 0, _hash(text)),
+        ).fetchone()
+        return None if row is None else [float(value) for value in json.loads(row["vector_json"])]
+
+    def put_cached_embedding(
+        self, provider: str, model: str, dimensions: int | None, text: str, vector: list[float]
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR IGNORE INTO embedding_cache VALUES (?, ?, ?, ?, ?, ?)",
+                (provider, model, dimensions or 0, _hash(text), _json(vector), _now()),
+            )
 
     def create_run(self, run_id: str, workflow: str, manifest: dict[str, Any]) -> None:
         with self.connection:
@@ -470,6 +497,97 @@ async def _index_chunks(
     }
 
 
+async def _embed_openai_compatible(
+    ctx: RunContext,
+    chunks: list[dict[str, Any]],
+    model: str,
+    api_key_env: str,
+    base_url: str = "https://api.openai.com/v1",
+    dimensions: int | None = None,
+    batch_size: int = 128,
+    input_cost_per_million_tokens: float | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    if not chunks:
+        raise ValidationError("Cannot embed zero chunks.")
+    if not isinstance(batch_size, int) or not 1 <= batch_size <= 2048:
+        raise ValidationError("Embedding batch_size must be an integer from 1 through 2048.")
+    if dimensions is not None and (not isinstance(dimensions, int) or dimensions < 1):
+        raise ValidationError("Embedding dimensions must be a positive integer when supplied.")
+    texts = [str(chunk.get("text", "")).strip() for chunk in chunks]
+    if not all(texts):
+        raise ValidationError("Every embedded chunk needs non-empty text.")
+    provider = base_url.rstrip("/")
+    vectors: list[list[float] | None] = [
+        ctx.project.store.get_cached_embedding(provider, model, dimensions, text) for text in texts
+    ]
+    missing = [(index, text) for index, (text, vector) in enumerate(zip(texts, vectors, strict=True)) if vector is None]
+    input_tokens = 0
+    for offset in range(0, len(missing), batch_size):
+        batch = missing[offset : offset + batch_size]
+        batch_vectors, usage = await _provider_embeddings(
+            base_url, api_key_env, model, [text for _, text in batch], dimensions
+        )
+        for (index, text), vector in zip(batch, batch_vectors, strict=True):
+            vectors[index] = vector
+            ctx.project.store.put_cached_embedding(provider, model, dimensions, text, vector)
+        input_tokens += int(usage.get("prompt_tokens", usage.get("total_tokens", 0)) or 0)
+    if any(vector is None for vector in vectors):
+        raise ValidationError("Embedding provider returned the wrong number of vectors.")
+    resolved_vectors = [vector for vector in vectors if vector is not None]
+    usage: dict[str, Any] = {
+        "provider": "openai-compatible",
+        "model": model,
+        "input_tokens": input_tokens,
+        "embedding_dimensions": len(resolved_vectors[0]) if resolved_vectors else 0,
+        "embedding_cache_hits": len(texts) - len(missing),
+    }
+    cost = _estimated_cost(input_tokens, input_cost_per_million_tokens)
+    if cost is not None:
+        usage["estimated_cost_usd"] = cost
+    ctx.usage = usage
+    return {"entries": [{"chunk": chunk, "embedding": vector} for chunk, vector in zip(chunks, resolved_vectors, strict=True)]}
+
+
+async def _index_embeddings(
+    ctx: RunContext,
+    entries: list[dict[str, Any]],
+    name: str = "semantic",
+    model: str = "text-embedding-3-small",
+    storage: str = "sqlite",
+    **_: Any,
+) -> dict[str, Any]:
+    if not entries:
+        raise ValidationError("Cannot index zero embeddings.")
+    if storage not in {"artifact", "sqlite"}:
+        raise ValidationError("Index storage must be artifact or sqlite.")
+    if not all(isinstance(entry.get("chunk"), dict) and isinstance(entry.get("embedding"), list) for entry in entries):
+        raise ValidationError("Semantic index entries need a chunk and embedding vector.")
+    dimensions = len(entries[0]["embedding"])
+    if dimensions < 1 or any(len(entry["embedding"]) != dimensions for entry in entries):
+        raise ValidationError("Semantic index vectors must be non-empty and share one dimension.")
+    resource_name = _safe_name(name)
+    storage_bytes = len(_json(entries).encode())
+    payload: dict[str, Any] = {
+        "name": resource_name,
+        "kind": "semantic",
+        "model": model,
+        "storage": storage,
+        "dimensions": dimensions,
+        "chunk_count": len(entries),
+        "storage_bytes": storage_bytes,
+        "created_at": _now(),
+    }
+    if storage == "artifact":
+        payload["entries"] = entries
+    index_id = ctx.project.store.put_artifact(payload, "semantic-retrieval-index")
+    if storage == "sqlite":
+        ctx.project.store.put_index_entries(index_id, entries)
+    ctx.project.store.set_resource(resource_name, index_id)
+    ctx.usage = {"index_id": index_id, "storage": storage, "dimensions": dimensions, "storage_bytes": storage_bytes}
+    return {"index_id": index_id, "index_info": {"storage": storage, "dimensions": dimensions, "chunks": len(entries), "storage_bytes": storage_bytes}}
+
+
 def _index_entries(ctx: RunContext, index_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     payload = ctx.project.store.get_artifact(index_id)
     entries = payload.get("entries") if payload.get("storage", "artifact") == "artifact" else None
@@ -529,6 +647,51 @@ async def _retrieve_hash(
         "strategy": "hash",
         "dimensions": payload.get("dimensions"),
     }
+    return {"chunks": ranked}
+
+
+async def _retrieve_semantic(
+    ctx: RunContext,
+    question: str,
+    name: str = "semantic",
+    model: str = "text-embedding-3-small",
+    api_key_env: str = "OPENAI_API_KEY",
+    base_url: str = "https://api.openai.com/v1",
+    top_k: int = 5,
+    dimensions: int | None = None,
+    input_cost_per_million_tokens: float | None = None,
+    resolved_index_id: str | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    if not isinstance(question, str) or not question.strip():
+        raise ValidationError("Question must be a non-empty string.")
+    if not isinstance(top_k, int) or top_k < 1:
+        raise ValidationError("top_k must be a positive integer.")
+    index_id = _resource_index_id(ctx, name, resolved_index_id)
+    payload, entries = _index_entries(ctx, index_id)
+    if payload.get("kind") != "semantic":
+        raise ValidationError(f"Resource {name!r} is not a semantic index.")
+    if payload.get("model") != model:
+        raise ValidationError("Query embedding model does not match the semantic index.")
+    query_vectors, usage = await _provider_embeddings(base_url, api_key_env, model, [question], dimensions)
+    query = query_vectors[0]
+    if len(query) != int(payload["dimensions"]):
+        raise ValidationError("Query embedding dimensions do not match the semantic index.")
+    ranked = _rank_semantic(query, entries, top_k)
+    input_tokens = int(usage.get("prompt_tokens", usage.get("total_tokens", 0)) or 0)
+    telemetry: dict[str, Any] = {
+        "provider": "openai-compatible",
+        "model": model,
+        "input_tokens": input_tokens,
+        "retrieved_chunks": len(ranked),
+        "index_id": index_id,
+        "strategy": "semantic-cosine",
+        "dimensions": len(query),
+    }
+    cost = _estimated_cost(input_tokens, input_cost_per_million_tokens)
+    if cost is not None:
+        telemetry["estimated_cost_usd"] = cost
+    ctx.usage = telemetry
     return {"chunks": ranked}
 
 
@@ -601,11 +764,10 @@ async def _openai_compatible_answer(
     api_key_env: str,
     base_url: str = "https://api.openai.com/v1",
     prompt: str | None = None,
+    input_cost_per_million_tokens: float | None = None,
+    output_cost_per_million_tokens: float | None = None,
     **_: Any,
 ) -> dict[str, Any]:
-    api_key = os.environ.get(api_key_env)
-    if not api_key:
-        raise ValidationError(f"Missing provider credential in environment variable {api_key_env}.")
     prompt_text = (
         (ctx.project.root / prompt).read_text() if prompt else "Answer using only the supplied context."
     )
@@ -621,26 +783,83 @@ async def _openai_compatible_answer(
         ],
         "temperature": 0,
     }
+    response = await _provider_json(base_url, api_key_env, "chat/completions", body)
+    usage = response.get("usage", {})
+    input_tokens = int(usage.get("prompt_tokens", 0) or 0)
+    output_tokens = int(usage.get("completion_tokens", 0) or 0)
+    telemetry: dict[str, Any] = {
+        "provider": "openai-compatible",
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
+    cost = _estimated_cost(input_tokens, input_cost_per_million_tokens, output_tokens, output_cost_per_million_tokens)
+    if cost is not None:
+        telemetry["estimated_cost_usd"] = cost
+    ctx.usage = telemetry
+    return {"answer": response["choices"][0]["message"]["content"]}
+
+
+async def _provider_embeddings(
+    base_url: str,
+    api_key_env: str,
+    model: str,
+    texts: list[str],
+    dimensions: int | None,
+) -> tuple[list[list[float]], dict[str, Any]]:
+    body: dict[str, Any] = {"model": model, "input": texts, "encoding_format": "float"}
+    if dimensions is not None:
+        body["dimensions"] = dimensions
+    response = await _provider_json(base_url, api_key_env, "embeddings", body)
+    data = sorted(response.get("data", []), key=lambda item: item.get("index", -1))
+    vectors = [item.get("embedding") for item in data]
+    if len(vectors) != len(texts) or not all(isinstance(vector, list) and vector for vector in vectors):
+        raise ValidationError("Embedding provider returned invalid vectors.")
+    try:
+        return [[float(value) for value in vector] for vector in vectors], dict(response.get("usage", {}))
+    except (TypeError, ValueError) as error:
+        raise ValidationError("Embedding provider returned non-numeric vectors.") from error
+
+
+async def _provider_json(base_url: str, api_key_env: str, endpoint: str, body: dict[str, Any]) -> dict[str, Any]:
+    api_key = os.environ.get(api_key_env)
+    if not api_key:
+        raise ValidationError(f"Missing provider credential in environment variable {api_key_env}.")
     request = urllib.request.Request(
-        urllib.parse.urljoin(base_url.rstrip("/") + "/", "chat/completions"),
+        urllib.parse.urljoin(base_url.rstrip("/") + "/", endpoint),
         data=_json(body).encode(),
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST",
     )
 
     def send() -> dict[str, Any]:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return json.loads(response.read())
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.loads(response.read())
+        except HTTPError as error:
+            raise ValidationError(f"Provider request failed: HTTP {error.code}.") from error
+        except Exception as error:
+            raise ValidationError(f"Provider request failed: {error}") from error
 
-    response = await asyncio.to_thread(send)
-    usage = response.get("usage", {})
-    ctx.usage = {
-        "provider": "openai-compatible",
-        "model": model,
-        "input_tokens": usage.get("prompt_tokens"),
-        "output_tokens": usage.get("completion_tokens"),
-    }
-    return {"answer": response["choices"][0]["message"]["content"]}
+    return await asyncio.to_thread(send)
+
+
+def _estimated_cost(
+    input_tokens: int,
+    input_cost_per_million_tokens: float | None,
+    output_tokens: int = 0,
+    output_cost_per_million_tokens: float | None = None,
+) -> float | None:
+    prices = (input_cost_per_million_tokens, output_cost_per_million_tokens)
+    if all(price is None for price in prices):
+        return None
+    if any(price is not None and (not isinstance(price, (int, float)) or price < 0) for price in prices):
+        raise ValidationError("Provider costs must be non-negative numbers per million tokens.")
+    return round(
+        input_tokens * float(input_cost_per_million_tokens or 0) / 1_000_000
+        + output_tokens * float(output_cost_per_million_tokens or 0) / 1_000_000,
+        9,
+    )
 
 
 def _builtin_components() -> dict[str, ComponentDefinition]:
@@ -652,6 +871,12 @@ def _builtin_components() -> dict[str, ComponentDefinition]:
         "retrieval.index": ComponentDefinition(
             {"chunks": "chunks"}, {"index_id": "index", "index_info": "index_info"}, _index_chunks
         ),
+        "embeddings.openai_compatible": ComponentDefinition(
+            {"chunks": "chunks"}, {"entries": "embedding_entries"}, _embed_openai_compatible
+        ),
+        "retrieval.semantic_index": ComponentDefinition(
+            {"entries": "embedding_entries"}, {"index_id": "index", "index_info": "index_info"}, _index_embeddings
+        ),
         "retrieval.vector": ComponentDefinition(
             {"question": "string"}, {"chunks": "chunks"}, _retrieve_bm25
         ),
@@ -660,6 +885,9 @@ def _builtin_components() -> dict[str, ComponentDefinition]:
         ),
         "retrieval.hash": ComponentDefinition(
             {"question": "string"}, {"chunks": "chunks"}, _retrieve_hash
+        ),
+        "retrieval.semantic": ComponentDefinition(
+            {"question": "string"}, {"chunks": "chunks"}, _retrieve_semantic
         ),
         "retrieval.hybrid": ComponentDefinition(
             {"question": "string"}, {"chunks": "chunks"}, _retrieve_hybrid
@@ -972,7 +1200,7 @@ workflows:
         nodes: dict[str, Any] = {}
         for node_name, node in workflow.nodes.items():
             config = dict(node.config)
-            if node.uses in {"retrieval.vector", "retrieval.bm25", "retrieval.hash", "retrieval.hybrid"}:
+            if node.uses in {"retrieval.vector", "retrieval.bm25", "retrieval.hash", "retrieval.hybrid", "retrieval.semantic"}:
                 resource_name = str(config.get("name", "default"))
                 index_id = self.store.get_resource(resource_name)
                 if index_id is None:
@@ -1259,10 +1487,10 @@ workflows:
                 retrieved = [chunk.get("document_id") for chunk in chunks]
                 expected = {str(value) for value in case.get("expected", {}).get("source_ids", [])}
                 scores = _retrieval_scores(retrieved, expected)
-                expected_answer = case.get("expected", {}).get("answer")
+                expected_answers = _expected_answers(case["expected"])
                 answer = run["outputs"].get("answer")
-                if isinstance(expected_answer, str) and expected_answer.strip() and isinstance(answer, str):
-                    answer_scores = _answer_scores(answer, expected_answer)
+                if expected_answers and isinstance(answer, str):
+                    answer_scores = _answer_scores(answer, expected_answers)
                     scores.update(answer_scores)
                     for metric, value in answer_scores.items():
                         answer_values[metric].append(value)
@@ -1629,6 +1857,21 @@ def _rank_hash(
     return [{**chunk, "score": round(score, 8)} for score, chunk in scored[:top_k]]
 
 
+def _rank_semantic(query: list[float], entries: list[dict[str, Any]], top_k: int) -> list[dict[str, Any]]:
+    # ponytail: brute-force cosine is intentional for local benchmark-sized indexes; add ANN only after a measured latency breach.
+    query_norm = math.sqrt(sum(value * value for value in query)) or 1.0
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for entry in entries:
+        vector = entry.get("embedding")
+        if not isinstance(vector, list) or len(vector) != len(query):
+            raise ValidationError("Semantic index contains an invalid embedding vector.")
+        score = sum(float(left) * float(right) for left, right in zip(query, vector, strict=True))
+        norm = math.sqrt(sum(float(value) * float(value) for value in vector)) or 1.0
+        scored.append((score / (query_norm * norm), entry["chunk"]))
+    scored.sort(key=lambda item: (-item[0], item[1]["id"]))
+    return [{**chunk, "score": round(score, 8)} for score, chunk in scored[:top_k]]
+
+
 def _fuse_rrf(
     primary: list[dict[str, Any]],
     secondary: list[dict[str, Any]],
@@ -1821,7 +2064,7 @@ def _triviaqa_records(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
                 {
                     "id": f"triviaqa:{question_id}",
                     "input": {"question": row["question"]},
-                    "expected": {"source_ids": expected_ids, "answer": answer.get("value", "")},
+                    "expected": {"source_ids": expected_ids, "answers": aliases},
                     "metadata": {"dataset": "mandarjoshi/trivia_qa"},
                 }
             )
@@ -1912,14 +2155,29 @@ def _retrieval_scores(retrieved: list[Any], expected: set[str]) -> dict[str, flo
     return {key: round(value, 6) for key, value in scores.items()}
 
 
-def _answer_scores(answer: str, expected: str) -> dict[str, float]:
-    actual_tokens, expected_tokens = _tokenize(answer), _tokenize(expected)
-    overlap = sum((Counter(actual_tokens) & Counter(expected_tokens)).values())
-    precision = overlap / len(actual_tokens) if actual_tokens else 0.0
-    recall = overlap / len(expected_tokens) if expected_tokens else 0.0
+def _expected_answers(expected: dict[str, Any]) -> list[str]:
+    aliases = expected.get("answers", [])
+    candidates = [expected.get("answer"), *(aliases if isinstance(aliases, list) else [])]
+    return list(dict.fromkeys(value.strip() for value in candidates if isinstance(value, str) and value.strip()))
+
+
+def _answer_scores(answer: str, expected_answers: list[str]) -> dict[str, float]:
+    actual_tokens = _tokenize(answer)
+    candidates = []
+    for expected in expected_answers:
+        expected_tokens = _tokenize(expected)
+        overlap = sum((Counter(actual_tokens) & Counter(expected_tokens)).values())
+        precision = overlap / len(actual_tokens) if actual_tokens else 0.0
+        recall = overlap / len(expected_tokens) if expected_tokens else 0.0
+        candidates.append(
+            (
+                1.0 if " ".join(actual_tokens) == " ".join(expected_tokens) else 0.0,
+                2 * precision * recall / (precision + recall) if precision + recall else 0.0,
+            )
+        )
     return {
-        "answer_exact_match": 1.0 if " ".join(actual_tokens) == " ".join(expected_tokens) else 0.0,
-        "answer_token_f1": round(2 * precision * recall / (precision + recall), 6) if precision + recall else 0.0,
+        "answer_exact_match": max(exact for exact, _ in candidates),
+        "answer_token_f1": round(max(f1 for _, f1 in candidates), 6),
     }
 
 
